@@ -1,0 +1,35 @@
+# frozen_string_literal: true
+
+<%= header_comment %>
+
+require "base64"
+
+module <%= module_name %>
+  # Auth adapter inferred from OpenAPI securitySchemes.
+  # Supported: HTTP bearer, API key header, HTTP basic.
+  module Auth
+    module_function
+
+    def headers(config)
+      case config.auth_kind.to_sym
+      when :basic
+        raise ConfigurationError, "api_key (username) and secret (password) are required for Basic auth" if blank?(config.api_key)
+
+        encoded = Base64.strict_encode64("#{config.api_key}:#{config.secret}")
+        { "Authorization" => "Basic #{encoded}" }
+      when :api_key
+        raise ConfigurationError, "api_key is required" if blank?(config.api_key)
+
+        { config.api_key_header => config.api_key.to_s }
+      else
+        raise ConfigurationError, "api_key is required" if blank?(config.api_key)
+
+        { "Authorization" => "Bearer #{config.api_key}" }
+      end
+    end
+
+    def blank?(value)
+      value.nil? || value.to_s.strip.empty?
+    end
+  end
+end

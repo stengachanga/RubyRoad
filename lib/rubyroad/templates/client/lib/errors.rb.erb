@@ -1,0 +1,35 @@
+# frozen_string_literal: true
+
+<%= header_comment %>
+
+module <%= module_name %>
+  class Error < StandardError
+    attr_reader :status, :body, :code
+
+    def initialize(message = nil, status: nil, body: nil, code: nil)
+      @status = status
+      @body = body
+      @code = code
+      super(message || default_message)
+    end
+
+    def default_message
+      "<%= a.title %> API error#{status ? " (HTTP #{status})" : ""}"
+    end
+  end
+
+  class ConfigurationError < Error; end
+  class APIError < Error; end
+  class AuthenticationError < APIError; end
+  class InvalidRequestError < APIError; end
+  class PaymentError < APIError; end
+  class NotFoundError < APIError; end
+  class RateLimitError < APIError; end
+  class APIConnectionError < Error; end
+
+  class SignatureError < Error
+    def default_message
+      "Webhook signature verification failed"
+    end
+  end
+end

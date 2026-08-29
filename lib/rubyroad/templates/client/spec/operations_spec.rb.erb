@@ -1,0 +1,56 @@
+# frozen_string_literal: true
+
+RSpec.describe <%= module_name %>::Client, "operations" do
+  subject(:client) { described_class.new }
+
+<% codegen.grouped_operations.each do |resource, ops| -%>
+  describe <%= resource.inspect %> do
+<% ops.each do |op| -%>
+    describe "#<%= op.method_name %>" do
+      it "returns a typed result on the happy path" do
+        stub_request(:<%= op.http_method %>, %r{<%= codegen.webmock_regex(op) %>})
+          .to_return(status: <%= op.success_status %>, body: JSON.generate(fixture(<%= "#{op.fixture_name}_response".inspect %>)), headers: json_headers)
+
+        result = client.<%= op.method_name %>(<%= codegen.example_kwargs(op) %>)
+<% if op.success_is_list -%>
+        expect(result).to be_a(<%= module_name %>::Models::Collection)
+        expect(result.data).to all(be_a(<%= module_name %>::Models::<%= op.success_item_const || 'Resource' %>))
+        expect(result.size).to be >= 0
+<% else -%>
+        expect(result).to be_a(<%= module_name %>::Models::<%= op.success_const || 'Resource' %>)
+<% if codegen.assertion_id(op) -%>
+        expect(result[:id]).to eq(<%= codegen.assertion_id(op).inspect %>) if result.respond_to?(:[])
+<% end -%>
+<% if op.body_properties.any? { |p| p.ruby_name == "amount" } && op.success_example.is_a?(Hash) && op.success_example["amount"] -%>
+        expect(result[:amount]).to eq(<%= Integer(op.success_example["amount"]) %>)
+        expect { <%= module_name %>::Money.new(cents: result[:amount], currency: result[:currency] || "USD") }.not_to raise_error
+<% end -%>
+<% end -%>
+      end
+
+      it "raises an API error on the error path" do
+        stub_request(:<%= op.http_method %>, %r{<%= codegen.webmock_regex(op) %>})
+          .to_return(status: <%= op.error_status %>, body: JSON.generate(fixture(<%= "#{op.fixture_name}_error".inspect %>)), headers: json_headers)
+
+        expect do
+          client.<%= op.method_name %>(<%= codegen.example_kwargs(op, for_error: true) %>)
+        end.to raise_error(<%= module_name %>::APIError)
+      end
+<% if op.has_idempotency -%>
+      it "sends an Idempotency-Key header when provided" do
+        stub_request(:<%= op.http_method %>, %r{<%= codegen.webmock_regex(op) %>})
+          .to_return(status: <%= op.success_status %>, body: JSON.generate(fixture(<%= "#{op.fixture_name}_response".inspect %>)), headers: json_headers)
+
+        client.<%= op.method_name %>(<%= codegen.example_kwargs(op) %>)
+
+        expect(WebMock).to have_requested(:<%= op.http_method %>, %r{<%= codegen.webmock_regex(op) %>})
+          .with(headers: { <%= (op.idempotency_header || 'Idempotency-Key').inspect %> => "req_demo_001" })
+      end
+<% end -%>
+    end
+
+<% end -%>
+  end
+
+<% end -%>
+end

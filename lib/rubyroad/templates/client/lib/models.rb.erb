@@ -1,0 +1,93 @@
+# frozen_string_literal: true
+
+<%= header_comment %>
+
+module <%= module_name %>
+  module Models
+    # Generic OpenAPI resource. Known fields become attr_readers; everything
+    # else remains available via `#[]` and `#to_h`.
+    class Resource
+      class << self
+        def fields
+          @fields ||= []
+        end
+
+        def field(*names)
+          names.flatten.each do |name|
+            name = name.to_sym
+            next if fields.include?(name)
+
+            fields << name
+            attr_reader name
+          end
+        end
+      end
+
+      def initialize(attributes = {})
+        @raw = normalize(attributes)
+        self.class.fields.each do |name|
+          instance_variable_set(:"@#{name}", @raw[name])
+        end
+      end
+
+      def [](key)
+        @raw[key.to_sym]
+      end
+
+      def to_h
+        @raw.dup
+      end
+
+      def ==(other)
+        other.is_a?(self.class) && other.to_h == to_h
+      end
+
+      private
+
+      def normalize(attributes)
+        case attributes
+        when Resource
+          attributes.to_h
+        when Hash
+          attributes.each_with_object({}) do |(key, value), acc|
+            acc[key.to_s.to_sym] = value
+          end
+        else
+          {}
+        end
+      end
+    end
+
+    class Collection
+      include Enumerable
+
+      attr_reader :data, :has_more, :raw
+
+      def initialize(payload, item_class: Resource)
+        @raw = payload.is_a?(Hash) ? symbolize(payload) : { data: Array(payload) }
+        items = @raw[:data] || @raw["data"] || []
+        items = payload if payload.is_a?(Array)
+        @data = Array(items).map { |item| item_class.new(item) }
+        @has_more = @raw[:has_more]
+      end
+
+      def each(&block)
+        data.each(&block)
+      end
+
+      def size
+        data.size
+      end
+
+      alias length size
+
+      private
+
+      def symbolize(hash)
+        hash.each_with_object({}) { |(k, v), acc| acc[k.to_s.to_sym] = v }
+      end
+    end
+
+<%= codegen.model_classes(indent: 4) %>
+  end
+end

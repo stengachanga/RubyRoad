@@ -1,0 +1,81 @@
+# frozen_string_literal: true
+
+RSpec.describe <%= module_name %>::Webhooks do
+<% unless a.has_webhooks -%>
+  it "still exposes a verifier stub so merchants can fill provider-specific details" do
+    expect(described_class).to respond_to(:verify!)
+  end
+<% else -%>
+  let(:secret) { "whsec_test_secret" }
+<% event = a.webhook_events.first -%>
+<% if event && event.example -%>
+  let(:payload) { JSON.generate(fixture(<%= "webhook_#{Rubyroad::Inflector.underscore(event.type.tr('.', '_'))}".inspect %>)) }
+<% else -%>
+  let(:payload) { JSON.generate("id" => "evt_test", "type" => "payment.succeeded", "data" => {}) }
+<% end -%>
+
+  it "accepts a valid HMAC-SHA256 <%= a.webhook_header %> header" do
+    header = sign_webhook(payload, secret: secret)
+    expect(described_class.verify!(payload, header, secret: secret)).to be true
+  end
+
+  it "rejects a tampered payload" do
+    header = sign_webhook(payload, secret: secret)
+    expect do
+      described_class.verify!("#{payload} ", header, secret: secret)
+    end.to raise_error(<%= module_name %>::SignatureError)
+  end
+
+  it "rejects a missing signature header" do
+    expect do
+      described_class.verify!(payload, "", secret: secret)
+    end.to raise_error(<%= module_name %>::SignatureError)
+  end
+
+  it "rejects a stale timestamp" do
+    header = sign_webhook(payload, secret: secret, timestamp: Time.now.to_i - 10_000)
+    expect do
+      described_class.verify!(payload, header, secret: secret, tolerance: 300)
+    end.to raise_error(<%= module_name %>::SignatureError, /tolerance/)
+  end
+
+  it "parses the event and yields it to handle" do
+    header = sign_webhook(payload, secret: secret)
+    seen = nil
+    event = described_class.handle(payload, header, secret: secret) { |e| seen = e }
+    expect(event).to be_a(<%= module_name %>::Models::WebhookEvent)
+    expect(seen).to eq(event)
+    expect(event.type.to_s).not_to eq("")
+  end
+
+  it "dispatches from the Rack-style endpoint" do
+    header = sign_webhook(payload, secret: secret)
+    received = nil
+    app = described_class::Endpoint.new(secret: secret) { |event| received = event.type }
+    env = {
+      "rack.input" => StringIO.new(payload),
+      "HTTP_<%= a.webhook_header.upcase.tr('-', '_') %>" => header
+    }
+    status, headers, body = app.call(env)
+    expect(status).to eq(200)
+    expect(headers["Content-Type"]).to eq("application/json")
+    expect(JSON.parse(body.join)).to include("received" => true)
+    expect(received).not_to be_nil
+  end
+
+<% a.webhook_events.uniq(&:type).each do |hook| -%>
+  it "understands <%= hook.type %> events" do
+<% slug = Rubyroad::Inflector.underscore(hook.type.tr('.', '_')) -%>
+<% if hook.example -%>
+    data = fixture(<%= "webhook_#{slug}".inspect %>)
+    expect(data["type"]).to eq(<%= hook.type.inspect %>)
+    event = <%= module_name %>::Models::WebhookEvent.new(data)
+    expect(event.type).to eq(<%= hook.type.inspect %>)
+<% else -%>
+    event = <%= module_name %>::Models::WebhookEvent.new("type" => <%= hook.type.inspect %>)
+    expect(event.type).to eq(<%= hook.type.inspect %>)
+<% end -%>
+  end
+<% end -%>
+<% end -%>
+end
