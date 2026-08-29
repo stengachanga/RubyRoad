@@ -1,0 +1,33 @@
+# frozen_string_literal: true
+
+<%= header_comment %>
+
+module <%= module_name %>
+  class Config
+    attr_accessor :api_key, :secret, :webhook_secret, :environment, :logger
+    attr_accessor :timeout, :open_timeout, :sandbox_url, :live_url, :auth_kind, :api_key_header
+
+    def initialize
+      @environment = :sandbox
+      @timeout = 30
+      @open_timeout = 10
+      @sandbox_url = <%= a.sandbox_url.inspect %>
+      @live_url = <%= a.live_url.inspect %>
+      @auth_kind = <%= a.auth_kind.inspect %>
+      @api_key_header = <%= a.auth_header.inspect %>
+      @logger = nil
+    end
+
+    def base_url
+      live? ? live_url : sandbox_url
+    end
+
+    def live?
+      environment.to_s == "live"
+    end
+
+    def sandbox?
+      !live?
+    end
+  end
+end

@@ -1,0 +1,108 @@
+# frozen_string_literal: true
+
+<%= header_comment %>
+
+require "json"
+require "openssl"
+
+module <%= module_name %>
+  # HMAC-SHA256 webhook verifier.
+  #
+  # Default scheme (documented by the spec): header
+  #   <%= a.webhook_header %>: t=<unix_timestamp>,v1=<hex_digest>
+  # signed payload is "<timestamp>.<raw_body>".
+  #
+  # TODO: confirm the provider's exact signed-string construction if the
+  # OpenAPI description is ambiguous (some providers sign only the raw body).
+  module Webhooks
+    DEFAULT_TOLERANCE = 300
+
+    module_function
+
+    def verify!(payload, signature_header, secret: nil, tolerance: DEFAULT_TOLERANCE, now: Time.now)
+      secret = secret || <%= module_name %>.config.webhook_secret
+      raise ConfigurationError, "webhook_secret is required" if secret.nil? || secret.to_s.empty?
+      raise SignatureError, "missing #{<%= a.webhook_header.inspect %>} header" if signature_header.to_s.empty?
+
+      timestamp, digest = parse_signature(signature_header)
+      if tolerance && timestamp
+        age = now.to_i - Integer(timestamp)
+        raise SignatureError, "webhook timestamp is outside the allowed tolerance" if age.abs > tolerance
+      end
+
+      signed = timestamp ? "#{timestamp}.#{payload}" : payload.to_s
+      expected = OpenSSL::HMAC.hexdigest("SHA256", secret.to_s, signed)
+      raise SignatureError, "invalid webhook signature" unless secure_compare(expected, digest)
+
+      true
+    end
+
+    def handle(payload, signature_header, secret: nil, tolerance: DEFAULT_TOLERANCE)
+      verify!(payload, signature_header, secret: secret, tolerance: tolerance)
+      event = Models::WebhookEvent.new(JSON.parse(payload))
+      yield event if block_given?
+      event
+    end
+
+    def parse_signature(header)
+      parts = header.to_s.split(",").each_with_object({}) do |chunk, acc|
+        key, value = chunk.split("=", 2)
+        acc[key.to_s.strip] = value.to_s.strip if key
+      end
+      digest = parts["v1"] || parts["signature"] || header.to_s.sub(/\Asha256=/, "")
+      raise SignatureError, "signature digest missing" if digest.empty?
+
+      [parts["t"], digest]
+    end
+
+    def secure_compare(left, right)
+      return false if left.nil? || right.nil? || left.bytesize != right.bytesize
+
+      OpenSSL.fixed_length_secure_compare(left, right)
+    end
+
+    # Minimal Rack-compatible app. No Rack dependency required — anything that
+    # speaks `[status, headers, body]` works (Sinatra, Rails metal, Puma).
+    class Endpoint
+      def initialize(secret: nil, &dispatcher)
+        @secret = secret
+        @dispatcher = dispatcher
+      end
+
+      def call(env)
+        req = RackRequest.new(env)
+        payload = req.body
+        signature = req.header(<%= a.webhook_header.inspect %>)
+        event = Webhooks.handle(payload, signature, secret: @secret || <%= module_name %>.config.webhook_secret) do |parsed|
+          @dispatcher&.call(parsed)
+        end
+        [200, { "Content-Type" => "application/json" }, [JSON.generate("received" => true, "type" => event.type)]]
+      rescue SignatureError => e
+        [400, { "Content-Type" => "application/json" }, [JSON.generate("error" => e.message)]]
+      rescue JSON::ParserError => e
+        [400, { "Content-Type" => "application/json" }, [JSON.generate("error" => e.message)]]
+      end
+    end
+
+    # Enough of Rack::Request for header + body access without depending on rack.
+    class RackRequest
+      def initialize(env)
+        @env = env
+      end
+
+      def body
+        input = @env["rack.input"]
+        return "" unless input
+
+        data = input.read
+        input.rewind if input.respond_to?(:rewind)
+        data
+      end
+
+      def header(name)
+        env_key = "HTTP_#{name.upcase.tr('-', '_')}"
+        @env[env_key] || @env[name]
+      end
+    end
+  end
+end

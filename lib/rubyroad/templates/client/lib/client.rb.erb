@@ -1,0 +1,60 @@
+# frozen_string_literal: true
+
+<%= header_comment %>
+
+require "uri"
+
+module <%= module_name %>
+  class Client
+    attr_reader :config, :http
+
+    def initialize(config = <%= module_name %>.config)
+      @config = config
+      @http = Http.new(config)
+    end
+
+<%= codegen.operation_methods(indent: 4) %>
+
+    private
+
+    def request(method, path, body: nil, headers: {}, query: {})
+      @http.perform(method, path, body: body, headers: headers, query: query)
+    end
+
+    def expand_path(template, params)
+      template.gsub(/\{([^}]+)\}/) do
+        key = Regexp.last_match(1)
+        value = params[key.to_sym] || params[key]
+        raise ArgumentError, "missing path parameter #{key}" if value.nil?
+
+        URI.encode_www_form_component(value.to_s)
+      end
+    end
+
+    # Accepts Money, Integer cents, or a Hash with :cents/:amount. Floats raise.
+    def normalize_money_amount(amount)
+      case amount
+      when Money
+        amount.cents
+      when Integer
+        amount
+      when Hash
+        value = amount[:cents] || amount[:amount] || amount["cents"] || amount["amount"]
+        raise ArgumentError, "amount must be integer minor units, never Float" if value.is_a?(Float)
+        raise ArgumentError, "amount hash must include :cents or :amount" if value.nil?
+
+        Integer(value)
+      else
+        raise ArgumentError, "amount must be #{self.class.name.split('::').first}::Money, Integer cents, or Hash — never Float"
+      end
+    end
+
+    def normalize_currency(currency, amount = nil)
+      return amount.currency if amount.is_a?(Money) && (currency.nil? || currency.to_s.empty?)
+      raise ArgumentError, "currency is required" if currency.nil? || currency.to_s.empty?
+      raise ArgumentError, "currency must not be a Float" if currency.is_a?(Float)
+
+      currency.to_s.upcase
+    end
+  end
+end
