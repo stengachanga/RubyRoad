@@ -38,23 +38,30 @@ RSpec.describe Rubyroad::Generator do
   it "produces a client whose generated RSpec suite passes offline", :integration do
     dest, = generate_acme
     vendor = File.join(dest, "vendor/bundle")
-    env = ENV.to_h.merge(
-      "BUNDLE_GEMFILE" => File.join(dest, "Gemfile"),
-      "BUNDLE_PATH" => vendor,
-      "GEM_HOME" => vendor,
-      "BUNDLE_IGNORE_CONFIG" => "1"
-    )
-    env.delete("BUNDLE_BIN_PATH")
-    stdout, stderr, status = Open3.capture3(
-      env,
-      "bash", "-lc",
-      "bundle install --quiet && bundle exec rspec --format progress",
-      chdir: dest
-    )
-    unless status.success?
-      warn stdout
-      warn stderr
+    status = nil
+    stdout = +""
+    Bundler.with_unbundled_env do
+      env = ENV.to_h.merge(
+        "GEM_HOME" => vendor,
+        "GEM_PATH" => vendor,
+        "BUNDLE_PATH" => vendor,
+        "PATH" => "/usr/bin:/bin:#{ENV.fetch('PATH')}"
+      )
+      FileUtils.mkdir_p(vendor)
+      install_out, install_err, install_status = Open3.capture3(
+        env, "/usr/bin/bundle", "install", chdir: dest
+      )
+      unless install_status.success?
+        status = install_status
+        stdout = "#{install_out}\n#{install_err}"
+      else
+        spec_out, spec_err, spec_status = Open3.capture3(
+          env, "/usr/bin/bundle", "exec", "rspec", "--format", "progress", chdir: dest
+        )
+        status = spec_status
+        stdout = "#{spec_out}\n#{spec_err}"
+      end
     end
-    expect(status).to be_success, "generated suite failed:\n#{stdout}\n#{stderr}"
+    expect(status).to be_success, "generated suite failed:\n#{stdout}"
   end
 end
