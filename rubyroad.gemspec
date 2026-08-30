@@ -31,7 +31,8 @@ Gem::Specification.new do |spec|
       "examples/**/*",
       "LICENSE",
       "README.md",
-      "DEMO.md"
+      "DEMO.md",
+      "STUDENTS.md"
     ].select { |path| File.file?(path) }
   end
   spec.bindir = "exe"
