@@ -1,5 +1,7 @@
 # RubyRoad
 
+New to Ruby? Start with the [student guide](STUDENTS.md).
+
 **Generate a payment-provider Ruby client, docs, and tests from an OpenAPI 3.x spec.**
 
 Point RubyRoad at a processor's OpenAPI document (Stripe-shaped, Adyen-shaped, or the bundled fictional Acme Pay spec). It emits a Faraday integration blank the merchant can drop into an app: real operation methods, integer-cents money, inferred auth, webhook HMAC verification, Markdown docs, and WebMock-backed RSpec examples that pass offline.
