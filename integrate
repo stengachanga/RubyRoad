@@ -1,0 +1,17 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Judge entrypoint: ./integrate --spec provider_api.yaml --provider novapay --lang ruby
+root = File.expand_path(__dir__)
+Dir.chdir(root)
+
+begin
+  require "bundler/setup"
+rescue LoadError
+  # Bundler is optional when lib/ is already on the load path.
+end
+
+$LOAD_PATH.unshift(File.join(root, "lib"))
+require "rubyroad"
+
+exit Rubyroad::CLI.start(["integrate", *ARGV])

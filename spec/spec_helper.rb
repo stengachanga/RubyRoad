@@ -26,6 +26,10 @@ module SpecHelpers
     File.join(repo_root, "examples/acme_pay.openapi.yaml")
   end
 
+  def novapay_spec_path
+    File.join(repo_root, "examples/provider_api.yaml")
+  end
+
   def fixture_path(name)
     File.join(repo_root, "spec/fixtures", name)
   end

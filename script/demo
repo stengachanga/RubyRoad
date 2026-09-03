@@ -1,25 +1,18 @@
 #!/usr/bin/env bash
-# Run the hackathon demo: generate Acme Pay and execute its specs.
+# Hackathon demo: generate NovaPay Space Payments service artifacts.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-# Keep gem installs inside the repo so the demo works without a writable system gem dir.
 export GEM_HOME="${GEM_HOME:-$root/vendor/bundle}"
 export BUNDLE_PATH="${BUNDLE_PATH:-$root/vendor/bundle}"
 
-echo "==> bundle install (RubyRoad)"
+echo "==> bundle install"
 bundle install
 
-echo "==> rubyroad generate examples/acme_pay.openapi.yaml"
-bundle exec rubyroad generate examples/acme_pay.openapi.yaml --force
+echo "==> ./integrate --spec examples/provider_api.yaml --provider novapay --lang ruby"
+./integrate --spec examples/provider_api.yaml --provider novapay --lang ruby
 
-echo "==> bundle install (generated AcmePay client)"
-cd generated/acme_pay
-export GEM_HOME="$PWD/vendor/bundle"
-export BUNDLE_PATH="$PWD/vendor/bundle"
-bundle install
-
-echo "==> bundle exec rspec (generated client)"
-bundle exec rspec
+echo "==> output/"
+ls -l output/novapay_service.rb output/INTEGRATION.md output/fixtures.json

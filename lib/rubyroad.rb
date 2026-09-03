@@ -7,7 +7,9 @@ require_relative "rubyroad/spec_loader"
 require_relative "rubyroad/analyzer"
 require_relative "rubyroad/codegen"
 require_relative "rubyroad/generator"
+require_relative "rubyroad/integrator"
 require_relative "rubyroad/cli"
+require_relative "provider"
 
 module Rubyroad
   def self.templates_path

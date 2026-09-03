@@ -2,17 +2,26 @@
 
 ## The idea
 
-A shop that wants to take cards talks to a **payment provider** over HTTP: send JSON to charge, send JSON to refund. Every provider’s API is a little different, so writing a Ruby client by hand is slow.
+A shop that wants to send payouts (СБП, cards) talks to a **payment provider** over HTTP: send JSON to create a payout, poll JSON for status, receive a webhook when it finishes. Every provider’s API is a little different, so writing the Space Payments adapter by hand is slow.
 
-**RubyRoad is a Ruby command-line tool.** You give it the provider’s **OpenAPI spec** (a YAML or JSON file that lists every URL, field, and example). It writes a starter integration:
+**RubyRoad is a Ruby command-line tool.** You give it the provider’s **OpenAPI spec** (a YAML or JSON file that lists every URL, field, and example). It writes a starter integration that matches Space Payments:
 
-1. A Ruby **client** you can call (`create_payment`, `create_refund`, …)
-2. **Docs** a teammate can read (README, API reference, how auth works)
-3. **Tests** that fake the HTTP calls, so you can practice without real cards or real money
+```ruby
+class Provider::ExampleService < Provider::BaseService
+  def check_conditions(operation, request_method)
+  def create_request(operation, ...)
+  def process_callback(payload)
+  def fetch_status(operation)
+end
+```
 
-OpenAPI is the menu. RubyRoad is the kitchen that cooks a Ruby client from that menu.
+1. A Ruby **service** (`output/novapay_service.rb`)
+2. **Docs** a teammate can read (`output/INTEGRATION.md`)
+3. **Fixtures** from the spec examples (`output/fixtures.json`)
 
-The bundled example is a fake provider called **Acme Pay**, so you can demo this without anyone’s secret keys.
+OpenAPI is the menu. RubyRoad is the kitchen that cooks a Ruby service from that menu. There is **no neural net** inside this project — only a parser and ERB templates.
+
+The bundled example is **NovaPay**, a mock payout API, so you can demo this without anyone’s secret keys.
 
 ## Run it (about a minute)
 
@@ -20,37 +29,38 @@ You need Ruby 3.2+ and Bundler.
 
 ```bash
 bundle install
-bundle exec rubyroad generate examples/acme_pay.openapi.yaml
-cd generated/acme_pay
-bundle install
-bundle exec rspec
+./integrate --spec examples/provider_api.yaml --provider novapay --lang ruby
 ```
 
-The last command should be all green. Tests use **WebMock**, which intercepts HTTP, so nothing leaves your machine.
+That prints a parse summary and writes three files under `output/`. `rubyroad generate` is the same command.
 
-`SPEC_PATH` can also be a URL. `--out` defaults to `generated/<provider>`. A bad spec fails with a clear error, not a stack trace dump.
+`SPEC_PATH` can also be a URL. `--out` defaults to `output`. A bad spec fails with a clear error, not a stack trace dump. Unsupported spec bits print `Warning:`.
 
-## What the generated client looks like
+## What the generated service looks like
 
-Open `generated/acme_pay/lib/acme_pay/client.rb`. A payment looks like this:
+Open `output/novapay_service.rb`. Creating a payout looks like this:
 
 ```ruby
-def create_payment(amount:, currency:, customer_id: nil, idempotency_key: nil, ...)
-  path = "/payments"
-  body = { amount: normalize_money_amount(amount), currency: normalize_currency(currency, amount) }
-  headers = {}
-  headers["Idempotency-Key"] = idempotency_key unless idempotency_key.nil?
-  payload = request(:post, path, body: body, headers: headers)
-  Models::Payment.new(payload)
+def create_request(operation, *_args)
+  precheck = check_conditions(operation, :create)
+  return precheck unless precheck[:success]
+
+  headers = auth_headers
+  headers["Idempotency-Key"] = operation.idempotency_key if operation.idempotency_key
+  response = client.post("/payouts") do |req|
+    req.headers.update(headers)
+    req.body = build_payout_payload(operation)
+  end
+  ...
 end
 ```
 
 Two Ruby things to notice:
 
-- **Keyword arguments** (`amount:`) make the call read like English: `client.create_payment(amount: 2500, currency: "USD")`.
-- **`2500` is cents, not dollars.** The generator refuses `Float` for money. In computers `0.1 + 0.2` is not exactly `0.3`, and that’s a bad surprise on a charge.
+- **Keyword-style operation fields** (`operation.amount`, `operation.payout_requisite`) are how Space Payments talks to every provider.
+- **`operation.amount` is rubles, the API wants kopecks.** The generator multiplies by 100. It refuses `Float` for money. In computers `0.1 + 0.2` is not exactly `0.3`, and that’s a bad surprise on a payout.
 
-The response is wrapped in a model (`Models::Payment`) so you get named fields instead of a raw Hash, while still being able to use `result[:id]`.
+`STATUS_MAP` turns provider words (`completed`) into Space Payments words (`approved`).
 
 ## How the generator works
 
@@ -58,50 +68,51 @@ The response is wrapped in a model (`Models::Payment`) so you get named fields i
 flowchart LR
   spec[OpenAPI YAML or URL] --> loader[SpecLoader]
   loader --> analyzer[Analyzer]
-  analyzer --> codegen[Codegen]
-  codegen --> erb[ERB templates]
-  erb --> client[Ruby client]
-  erb --> docs[Markdown docs]
-  erb --> tests[RSpec tests]
+  analyzer --> profile[PayoutProfile]
+  profile --> erb[ERB templates]
+  erb --> service[Provider service]
+  erb --> docs[INTEGRATION.md]
+  erb --> fixtures[fixtures.json]
 ```
 
 1. **SpecLoader** (`lib/rubyroad/spec_loader.rb`) — reads a file or downloads a URL, parses YAML/JSON.
-2. **Analyzer** (`lib/rubyroad/analyzer.rb`) — walks paths, methods, schemas, auth, webhooks, and turns them into plain Ruby objects.
-3. **Codegen** (`lib/rubyroad/codegen.rb`) — turns those objects into snippets of Ruby and Markdown.
-4. **ERB templates** (`lib/rubyroad/templates/`) — Ruby’s built-in fill-in-the-blanks format. `<%= name %>` gets replaced when the file is rendered.
-5. Files are written under `--out`.
+2. **Analyzer** (`lib/rubyroad/analyzer.rb`) — walks paths, methods, schemas, auth, webhooks.
+3. **PayoutProfile** (`lib/rubyroad/integrator.rb`) — decides which operation is create / status / cancel / webhook / balance.
+4. **ERB templates** (`lib/rubyroad/templates/service/`) — Ruby’s built-in fill-in-the-blanks format.
+5. Files are written under `--out` (default `output/`).
 
-The CLI entry is `exe/rubyroad`. You run it with `bundle exec rubyroad generate ...`.
+The judge entry is `./integrate`. You run it with `./integrate --spec … --provider … --lang ruby`.
 
 ## Ruby words you’ll meet
 
 | Word | What it means here |
 | --- | --- |
-| **Gem** | A packaged Ruby library. This repo is a gem; the generated client is another gem. |
-| **Module / class** | `module Rubyroad` is a namespace so names don’t collide. `class Client` is the object you talk to. |
+| **Gem** | A packaged Ruby library. This repo is a gem. |
+| **Module / class** | `module Provider` is a namespace. `class NovapayService` is the object Space Payments calls. |
 | **Bundler / Gemfile** | The shopping list of libraries: Faraday (HTTP), RSpec (tests), WebMock (fake HTTP). |
-| **Faraday** | A friendly HTTP client. The generated `Http` class uses it to POST and GET. |
-| **ERB** | Templates with Ruby inside. That’s how one generator can emit many different clients. |
-| **RSpec** | Tests that read like sentences: `it "returns a typed result on the happy path"`. |
-| **WebMock** | Catches HTTP in tests so you never hit the real Acme Pay (or Stripe) servers. |
+| **Faraday** | A friendly HTTP client. The generated service uses it to POST and GET. |
+| **ERB** | Templates with Ruby inside. That’s how one generator can emit many different providers. |
+| **RSpec** | Tests that read like sentences. |
 | **OpenAPI** | Not Ruby. It’s a document format APIs publish. YAML is the usual syntax. |
-| **HMAC webhook** | The provider calls *you* when a payment succeeds. The generated code checks a signature so strangers can’t fake events. |
+| **HMAC webhook** | The provider calls *you* when a payout finishes. The generated code checks a signature so strangers can’t fake events. |
+| **Idempotency-Key** | A header so a retried create does not pay out twice. |
 
 ## Things the project is stubborn about (worth copying)
 
-- **Auth** is inferred from the spec: Bearer token, API key, or Basic.
-- **Idempotency-Key** on create calls, so a retried request doesn’t charge twice.
+- **Auth** is inferred from the spec: API key header, Bearer, or Basic.
+- **Idempotency-Key** on create calls.
 - **Sandbox vs live** base URLs come from the spec’s `servers` list.
-- **Webhooks** get a verifier and tests, not just a comment that says “TODO.”
+- **Webhooks** get a verifier, not just a comment that says “TODO.”
+- **Warnings** when a spec feature is unsupported (scored).
 
 ## A good order to read the code
 
-You do not need to understand every line. Follow **one** payment all the way through.
+You do not need to understand every line. Follow **one** payout all the way through.
 
 1. `DEMO.md` — the commands
-2. `examples/acme_pay.openapi.yaml` — skim `paths` and `components.schemas`, especially `POST /payments`
-3. `generated/acme_pay/lib/acme_pay/client.rb` — `create_payment`
-4. `generated/acme_pay/spec/` — the test that stubs that same POST
-5. Then the generator: `spec_loader.rb` → `analyzer.rb` → `codegen.rb` → `templates/`
+2. `examples/provider_api.yaml` — skim `paths` and `components.schemas`, especially `POST /payouts`
+3. `output/novapay_service.rb` — `create_request` and `STATUS_MAP`
+4. `output/fixtures.json` — the same create + callback examples
+5. Then the generator: `spec_loader.rb` → `analyzer.rb` → `integrator.rb` → `templates/service/`
 
-If you can point to the YAML operation, the Ruby method, and the RSpec example for the same payment, you understand the project.
+If you can point to the YAML operation, the Ruby method, and the fixture for the same payout, you understand the project.

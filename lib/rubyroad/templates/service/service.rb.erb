@@ -1,0 +1,420 @@
+# frozen_string_literal: true
+
+<%= header_comment %>
+#
+# Space Payments provider service generated from OpenAPI.
+# Drop this file into app/services/provider/<%= profile.file_stem %>.rb
+# (RubyRoad also writes a copy there when you run ./integrate).
+
+require "faraday"
+require "json"
+require "openssl"
+
+begin
+  require "provider/base_service"
+rescue LoadError
+  require_relative "../lib/provider/base_service"
+end
+
+require "uri"
+
+class <%= profile.service_class %> < Provider::BaseService
+  BASE_URL = ENV.fetch("<%= profile.env_prefix %>_BASE_URL", <%= a.sandbox_url.inspect %>)
+  LIVE_URL = <%= a.live_url.inspect %>
+  AUTH_HEADER = <%= a.auth_header.inspect %>
+  IDEMPOTENCY_HEADER = <%= (profile.create_op&.idempotency_header || a.idempotency_header).inspect %>
+  SIGNATURE_HEADER = <%= a.webhook_header.inspect %>
+  AMOUNT_SCALE = <%= profile.amount_scale %>
+<% if profile.amount_minimum_major -%>
+  MIN_AMOUNT_MAJOR = <%= profile.amount_minimum_major.to_i %>
+<% end -%>
+
+  STATUS_MAP = {
+<% profile.status_map.each do |from, to| -%>
+    <%= from.inspect %> => <%= to.inspect %>,
+<% end -%>
+  }.freeze
+
+  ERROR_MAP = {
+    400 => :invalid_request,
+    401 => :unauthorized,
+    402 => :insufficient_balance,
+    404 => :not_found,
+    409 => :conflict,
+    422 => :validation_error,
+    429 => :rate_limited,
+    500 => :provider_error
+  }.freeze
+
+  def check_conditions(operation, request_method)
+    result = super
+    return result if result.is_a?(Hash) && result[:success] == false
+
+<% if profile.amount_minimum_major -%>
+    if create_method?(request_method)
+      amount = operation_amount(operation)
+      if amount && amount < MIN_AMOUNT_MAJOR
+        return failure(:amount_too_low, "Amount must be at least #{MIN_AMOUNT_MAJOR} <%= profile.currency %> (spec minimum is <%= profile.amount_minimum_minor %> minor units)")
+      end
+    end
+<% end -%>
+<% if profile.phone_pattern -%>
+    if create_method?(request_method)
+      phone = requisite_value(operation, "phone")
+      if phone && !phone.to_s.match?(Regexp.new(<%= profile.phone_pattern.inspect %>))
+        return failure(:invalid_phone, "Recipient phone must match #{Regexp.new(<%= profile.phone_pattern.inspect %>).source}")
+      end
+    end
+<% end -%>
+
+    success
+  end
+
+<% if profile.create_op -%>
+  # <%= profile.create_op.http_method.upcase %> <%= profile.create_op.path %> (<%= profile.create_op.operation_id %>)
+  def create_request(operation, *_args)
+    precheck = check_conditions(operation, :create)
+    return precheck unless precheck[:success]
+
+    headers = auth_headers
+<% if profile.create_op.has_idempotency -%>
+    key = operation_value(operation, :idempotency_key)
+    headers[IDEMPOTENCY_HEADER] = key if key
+<% end -%>
+
+    response = client.post(full_path(<%= profile.create_op.path.inspect %>)) do |req|
+      req.headers.update(headers)
+      req.body = build_payout_payload(operation)
+    end
+    payload = parse_json(response.body)
+    raise Provider::UnauthorizedError, error_message(payload, response) if response.status == 401
+    raise Provider::RateLimitError, error_message(payload, response) if response.status == 429
+
+    unless response.success?
+      return mapped_error(response, payload)
+    end
+
+    provider_id = payload["id"] || payload["payout_id"]
+    success(
+      provider_operation_id: provider_id,
+      provider_status: payload["status"],
+      mapped_status: map_status(payload["status"]),
+      payload: payload
+    )
+  rescue Provider::RateLimitError => e
+    failure(:rate_limited, e.message)
+  rescue Provider::UnauthorizedError => e
+    failure(:unauthorized, e.message)
+  rescue Faraday::UnauthorizedError => e
+    failure(:unauthorized, e.message)
+  rescue Faraday::ConnectionFailed, Faraday::TimeoutError => e
+    failure(:connection_error, e.message)
+  end
+<% else -%>
+  def create_request(_operation, *_args)
+    failure(:not_implemented, "No create operation in the OpenAPI spec")
+  end
+<% end -%>
+
+<% if profile.status_op -%>
+  # <%= profile.status_op.http_method.upcase %> <%= profile.status_op.path %> (<%= profile.status_op.operation_id %>)
+  def fetch_status(operation)
+    precheck = check_conditions(operation, :status)
+    return precheck unless precheck[:success]
+
+    provider_id = operation_value(operation, :provider_operation_id)
+    return failure(:missing_provider_id, "operation.provider_operation_id is required") if provider_id.to_s.empty?
+
+    path = full_path(expand_path(<%= profile.status_op.path.inspect %>, provider_id))
+    response = client.get(path) do |req|
+      req.headers.update(auth_headers)
+    end
+    payload = parse_json(response.body)
+    raise Provider::UnauthorizedError, error_message(payload, response) if response.status == 401
+    raise Provider::RateLimitError, error_message(payload, response) if response.status == 429
+    return mapped_error(response, payload) unless response.success?
+
+    mapped = map_status(payload["status"])
+    apply_mapped_status(operation, mapped, payload)
+    success(provider_status: payload["status"], mapped_status: mapped, payload: payload)
+  rescue Provider::RateLimitError => e
+    failure(:rate_limited, e.message)
+  rescue Provider::UnauthorizedError => e
+    failure(:unauthorized, e.message)
+  end
+<% else -%>
+  def fetch_status(_operation)
+    failure(:not_implemented, "No status operation in the OpenAPI spec")
+  end
+<% end -%>
+
+<% if profile.webhook_op -%>
+  # <%= profile.webhook_op.http_method.upcase %> <%= profile.webhook_op.path %> (<%= profile.webhook_op.operation_id %>)
+  def process_callback(payload)
+    raw, headers = normalize_callback(payload)
+    verify_signature!(raw, headers)
+    data = parse_json(raw)
+    event = data["event"] || data["type"]
+    status = data["status"]
+    mapped = map_status(status)
+    operation_ref = data["external_id"] || data["payout_id"] || data["id"]
+
+    case event.to_s
+    when /complet|success|approved/
+      approve_operation(operation_ref, provider_status: status, event: event, payload: data)
+    when /fail|reject|cancel|declin/
+      reject_operation(operation_ref, provider_status: status, event: event, payload: data)
+    else
+      logger&.info("webhook event #{event} mapped to #{mapped}")
+    end
+
+    success(event: event, mapped_status: mapped, received: true)
+  rescue Provider::SignatureError => e
+    failure(:invalid_signature, e.message)
+  end
+<% else -%>
+  def process_callback(_payload)
+    failure(:not_implemented, "No webhook operation in the OpenAPI spec")
+  end
+<% end -%>
+
+<% if profile.cancel_op -%>
+  # <%= profile.cancel_op.http_method.upcase %> <%= profile.cancel_op.path %> (<%= profile.cancel_op.operation_id %>)
+  def cancel_request(operation)
+    provider_id = operation_value(operation, :provider_operation_id)
+    return failure(:missing_provider_id, "operation.provider_operation_id is required") if provider_id.to_s.empty?
+
+    path = full_path(expand_path(<%= profile.cancel_op.path.inspect %>, provider_id))
+    response = client.post(path) do |req|
+      req.headers.update(auth_headers)
+    end
+    payload = parse_json(response.body)
+    return mapped_error(response, payload) unless response.success?
+
+    success(provider_status: payload["status"], mapped_status: map_status(payload["status"]), payload: payload)
+  end
+<% end -%>
+
+<% if profile.balance_op -%>
+  # <%= profile.balance_op.http_method.upcase %> <%= profile.balance_op.path %> (<%= profile.balance_op.operation_id %>)
+  def get_balance
+    response = client.get(full_path(<%= profile.balance_op.path.inspect %>)) do |req|
+      req.headers.update(auth_headers)
+    end
+    payload = parse_json(response.body)
+    return mapped_error(response, payload) unless response.success?
+
+    success(payload: payload)
+  end
+<% end -%>
+
+  def client
+    origin, @path_prefix = split_base(BASE_URL)
+    @client ||= Faraday.new(url: origin) do |faraday|
+      faraday.request :json
+      faraday.response :json, content_type: /\bjson$/
+      faraday.adapter Faraday.default_adapter
+    end
+  end
+
+  def auth_headers
+<% if a.auth_kind == :api_key -%>
+    { AUTH_HEADER => api_key, "Content-Type" => "application/json", "Accept" => "application/json" }
+<% elsif a.auth_kind == :basic -%>
+    encoded = Base64.strict_encode64("#{api_key}:#{callback_secret}")
+    { "Authorization" => "Basic #{encoded}", "Content-Type" => "application/json" }
+<% else -%>
+    { "Authorization" => "Bearer #{api_key}", "Content-Type" => "application/json", "Accept" => "application/json" }
+<% end -%>
+  end
+
+  def map_status(provider_status)
+    STATUS_MAP.fetch(provider_status.to_s) { "in_progress" }
+  end
+
+  private
+
+  def api_key
+    ENV.fetch("<%= profile.env_prefix %>_API_KEY") do
+      credentials["api_key"] || credentials["token"] || raise(Provider::UnauthorizedError, "<%= profile.env_prefix %>_API_KEY is missing")
+    end
+  end
+
+  def callback_secret
+    ENV.fetch("<%= profile.env_prefix %>_CALLBACK_SECRET") do
+      credentials["callback_secret"] || credentials["webhook_secret"] || ""
+    end
+  end
+
+<% if profile.create_op -%>
+  def build_payout_payload(operation)
+    req = hashify(operation_value(operation, :payout_requisite) || operation_value(operation, :requisite) || {})
+    amount_major = operation_amount(operation)
+    {
+<% profile.create_op.body_properties.each do |prop| -%>
+<% if prop.ruby_name == "amount" -%>
+      amount: (amount_major.to_r * AMOUNT_SCALE).to_i,
+<% elsif prop.ruby_name == "currency" -%>
+      currency: (operation_value(operation, :currency) || <%= profile.currency.inspect %>).to_s,
+<% elsif prop.ruby_name == "external_id" -%>
+      external_id: operation_value(operation, :id).to_s,
+<% elsif prop.ruby_name == "recipient" -%>
+      recipient: {
+<% profile.recipient_properties.each do |rprop| -%>
+        <%= rprop[:ruby_name] %>: req[<%= rprop[:name].inspect %>] || req[:<%= rprop[:ruby_name] %>],
+<% end -%>
+      }.compact,
+<% else -%>
+      <%= prop.ruby_name %>: operation_value(operation, :<%= prop.ruby_name %>),
+<% end -%>
+<% end -%>
+    }.compact
+  end
+<% end -%>
+
+  def verify_signature!(raw_body, headers)
+    secret = callback_secret
+    raise Provider::SignatureError, "callback secret is missing" if secret.to_s.empty?
+
+    provided = header_value(headers, SIGNATURE_HEADER)
+    raise Provider::SignatureError, "missing #{SIGNATURE_HEADER} header" if provided.to_s.empty?
+
+<% if profile.hmac_raw_body? -%>
+    expected = OpenSSL::HMAC.hexdigest("SHA256", secret, raw_body.to_s)
+    provided_hex = provided.to_s.sub(/\Asha256=/i, "")
+    unless secure_compare(expected, provided_hex)
+      raise Provider::SignatureError, "invalid #{SIGNATURE_HEADER}"
+    end
+<% else -%>
+    parts = provided.to_s.split(",").each_with_object({}) do |chunk, acc|
+      key, value = chunk.split("=", 2)
+      acc[key.to_s.strip] = value.to_s.strip if key
+    end
+    timestamp = parts["t"]
+    digest = parts["v1"] || provided.to_s
+    signed = timestamp ? "#{timestamp}.#{raw_body}" : raw_body.to_s
+    expected = OpenSSL::HMAC.hexdigest("SHA256", secret, signed)
+    raise Provider::SignatureError, "invalid #{SIGNATURE_HEADER}" unless secure_compare(expected, digest)
+<% end -%>
+    true
+  end
+
+  def normalize_callback(payload)
+    case payload
+    when String
+      [payload, {}]
+    when Hash
+      if payload[:body] || payload["body"]
+        raw = payload[:body] || payload["body"]
+        headers = payload[:headers] || payload["headers"] || {}
+        raw = JSON.generate(raw) unless raw.is_a?(String)
+        [raw, headers]
+      else
+        [JSON.generate(payload), payload[:headers] || payload["headers"] || {}]
+      end
+    else
+      if payload.respond_to?(:body) && payload.respond_to?(:headers)
+        body = payload.body
+        body = body.read if body.respond_to?(:read)
+        [body.to_s, payload.headers]
+      else
+        [payload.to_s, {}]
+      end
+    end
+  end
+
+  def expand_path(template, provider_id)
+    template.gsub(/\{[^}]+\}/) { URI.encode_www_form_component(provider_id.to_s) }
+  end
+
+  def full_path(path)
+    origin, prefix = split_base(BASE_URL)
+    _ = origin
+    "#{prefix}#{path.start_with?('/') ? path : "/#{path}"}"
+  end
+
+  def split_base(url)
+    uri = URI.parse(url)
+    origin = "#{uri.scheme}://#{uri.host}"
+    origin += ":#{uri.port}" if uri.port && ![80, 443].include?(uri.port)
+    prefix = uri.path.to_s.sub(%r{/\z}, "")
+    [origin, prefix]
+  end
+
+  def parse_json(body)
+    return body if body.is_a?(Hash)
+    return {} if body.nil? || body.to_s.empty?
+
+    JSON.parse(body)
+  rescue JSON::ParserError
+    { "raw" => body.to_s }
+  end
+
+  def mapped_error(response, payload)
+    code = ERROR_MAP[response.status] || :provider_error
+    failure(code, error_message(payload, response), http_status: response.status, payload: payload)
+  end
+
+  def error_message(payload, response)
+    err = payload.is_a?(Hash) ? (payload["error"] || payload) : {}
+    err = {} unless err.is_a?(Hash)
+    err["message"] || err[:message] || "HTTP #{response.status}"
+  end
+
+  def apply_mapped_status(operation, mapped, payload)
+    case mapped
+    when "approved"
+      approve_operation(operation, payload: payload)
+    when "rejected"
+      reject_operation(operation, payload: payload)
+    end
+  end
+
+  def create_method?(request_method)
+    request_method.to_s.match?(/create|payout|pay/i)
+  end
+
+  def operation_amount(operation)
+    value = operation_value(operation, :amount)
+    return if value.nil?
+    raise ArgumentError, "amount must be integer major units, never Float" if value.is_a?(Float)
+
+    value.to_r
+  end
+
+  def operation_value(operation, key)
+    return if operation.nil?
+
+    if operation.respond_to?(key)
+      operation.public_send(key)
+    elsif operation.is_a?(Hash)
+      operation[key] || operation[key.to_s]
+    end
+  end
+
+  def requisite_value(operation, key)
+    req = hashify(operation_value(operation, :payout_requisite) || operation_value(operation, :requisite) || {})
+    req[key] || req[key.to_sym]
+  end
+
+  def hashify(value)
+    return {} if value.nil?
+    return value.transform_keys(&:to_s) if value.is_a?(Hash)
+    return value.to_h.transform_keys(&:to_s) if value.respond_to?(:to_h)
+
+    {}
+  end
+
+  def header_value(headers, name)
+    return if headers.nil?
+
+    headers[name] || headers[name.downcase] || headers[name.upcase] ||
+      headers["HTTP_#{name.upcase.tr('-', '_')}"]
+  end
+
+  def secure_compare(left, right)
+    return false if left.nil? || right.nil? || left.bytesize != right.bytesize
+
+    OpenSSL.fixed_length_secure_compare(left, right)
+  end
+end

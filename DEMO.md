@@ -1,36 +1,46 @@
 # Judge demo (about a minute)
 
-From the repository root. Requires Ruby 3.2+ and Bundler.
+From the repository root. Requires Ruby 3.2+ and Bundler. No neural nets — OpenAPI parse + ERB only.
 
 ```bash
-# 1. Install RubyRoad
 bundle install
-
-# 2. Generate the Acme Pay client from the bundled OpenAPI 3.1 spec
-bundle exec rubyroad generate examples/acme_pay.openapi.yaml
-
-# 3. Install the generated client and run its suite (WebMock, no live network)
-cd generated/acme_pay
-bundle install
-bundle exec rspec
+./integrate --spec examples/provider_api.yaml --provider novapay --lang ruby
 ```
 
-Expected: every example green. Open `generated/acme_pay/lib/acme_pay/client.rb` — `create_payment`, `retrieve_payment`, `create_refund`, `list_customers`, and `create_customer` have real Faraday bodies, not empty stubs.
+(`provider_api.yaml` at the repo root is the same file. `rubyroad generate --spec examples/provider_api.yaml --provider novapay --lang ruby` is an alias.)
 
-Optional extras:
+Expected stdout includes a parse summary:
+
+```
+Parsing spec...
+Found 5 endpoints: POST /payouts, GET /payouts/{id}, POST /payouts/{id}/cancel,
+                  POST /webhooks/payout, GET /balance
+Auth: ApiKeyAuth (header: X-API-Key)
+Webhook signature: X-NovaPay-Signature (HMAC-SHA256)
+Generating service...
+Generating integration guide...
+Generating test fixtures...
+
+Output:
+  ./output/novapay_service.rb
+  ./output/INTEGRATION.md
+  ./output/fixtures.json
+```
+
+Then read:
 
 ```bash
-# Invalid spec fails clearly
-bundle exec rubyroad generate /dev/null
-# => rubyroad: Failed to parse OpenAPI document: ...
-
-# Custom output / name
-bundle exec rubyroad generate examples/acme_pay.openapi.yaml --out /tmp/acme --name acme_pay --force
-
-# Read the generated merchant docs
-less generated/acme_pay/README.md
-less generated/acme_pay/docs/API.md
-less generated/acme_pay/docs/AUTH.md
+less output/novapay_service.rb
+less output/INTEGRATION.md
+python3 -m json.tool output/fixtures.json | head
 ```
 
-There is also `script/demo` which runs steps 1–3 for you.
+`Provider::NovapayService` subclasses `Provider::BaseService` and implements `check_conditions`, `create_request`, `process_callback`, `fetch_status`, plus `STATUS_MAP`. A copy is also at `app/services/provider/novapay_service.rb`.
+
+Optional: Faraday client gem (not the scored path):
+
+```bash
+bundle exec rubyroad generate-client examples/acme_pay.openapi.yaml --force
+```
+
+There is also `script/demo`, which runs the integrate command for you.

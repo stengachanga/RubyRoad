@@ -145,6 +145,8 @@ module Rubyroad
   end
 
   class TemplateContext
+    attr_accessor :profile
+
     def initialize(analysis)
       @analysis = analysis
       @codegen = Codegen.new(analysis)
