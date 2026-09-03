@@ -71,6 +71,8 @@ module Rubyroad
     :has_idempotency,
     :idempotency_header,
     :fixture_name,
+    :request_examples,
+    :response_examples,
     keyword_init: true
   )
 
@@ -124,7 +126,7 @@ module Rubyroad
         webhook_events: webhook_events,
         webhook_header: webhook_header,
         webhook_algorithm: "SHA256",
-        webhook_format: :stripe_style,
+        webhook_format: webhook_format,
         has_idempotency: operations.any?(&:has_idempotency),
         idempotency_header: idempotency_header,
         preferred_auth: preferred_auth
@@ -212,14 +214,16 @@ module Rubyroad
       keys = default_security
       schemes = security_schemes
       chosen = schemes.find { |s| keys.include?(s.key) } || schemes.first
-      return { kind: :bearer, header: "Authorization" } unless chosen
+      return { kind: :bearer, header: "Authorization", key: "bearerAuth" } unless chosen
 
       if chosen.type == "http" && chosen.scheme.downcase == "basic"
-        { kind: :basic, header: "Authorization" }
+        { kind: :basic, header: "Authorization", key: chosen.key }
       elsif chosen.type == "apiKey" && chosen.in == "header"
-        { kind: :api_key, header: chosen.header_name.empty? ? "X-API-Key" : chosen.header_name }
+        { kind: :api_key, header: chosen.header_name.empty? ? "X-API-Key" : chosen.header_name, key: chosen.key }
+      elsif chosen.type == "oauth2" || chosen.type == "openIdConnect"
+        { kind: :unsupported, header: "Authorization", key: chosen.key, type: chosen.type }
       else
-        { kind: :bearer, header: "Authorization" }
+        { kind: :bearer, header: "Authorization", key: chosen.key }
       end
     end
 
@@ -264,7 +268,6 @@ module Rubyroad
           HTTP_VERBS.each do |verb|
             operation = item[verb]
             next unless operation.is_a?(Hash)
-            next if path.match?(/webhook/i) && verb == "post" && operation["operationId"].to_s.match?(/receive|ingest|listen/i)
 
             ops << build_operation(verb, path, operation, shared)
           end
@@ -322,7 +325,9 @@ module Rubyroad
         error_example: error_example,
         has_idempotency: !idempotency.nil? || idempotency_mentioned?(operation),
         idempotency_header: (idempotency && idempotency.name) || idempotency_header,
-        fixture_name: Inflector.underscore(method_name)
+        fixture_name: Inflector.underscore(method_name),
+        request_examples: named_examples_from(operation["requestBody"]),
+        response_examples: response_examples_from(operation)
       )
     end
 
@@ -625,6 +630,28 @@ module Rubyroad
       end
     end
 
+    def named_examples_from(object)
+      return {} unless object.is_a?(Hash)
+
+      content = object["content"]
+      media = content.is_a?(Hash) ? (content["application/json"] || content.values.find { |v| v.is_a?(Hash) }) : nil
+      examples = media.is_a?(Hash) ? media["examples"] : nil
+      return {} unless examples.is_a?(Hash)
+
+      examples.each_with_object({}) do |(name, example), acc|
+        value = example.is_a?(Hash) && example.key?("value") ? example["value"] : example
+        acc[name.to_s] = value
+      end
+    end
+
+    def response_examples_from(operation)
+      responses = operation["responses"] || {}
+      responses.each_with_object({}) do |(status, response), acc|
+        example = content_example(response)
+        acc[status.to_s] = example if example
+      end
+    end
+
     def default_error_example
       {
         "error" => {
@@ -664,6 +691,7 @@ module Rubyroad
         events = []
         events.concat(events_from_webhooks_block)
         events.concat(events_from_callbacks)
+        events.concat(events_from_path_webhooks)
         events.concat(events_from_schema_enum)
         events.uniq(&:type)
       end
@@ -725,14 +753,35 @@ module Rubyroad
       return [] unless event_schema
 
       schema = flatten_schema(event_schema.last)
-      enum = schema.dig("properties", "type", "enum")
+      enum = schema.dig("properties", "event", "enum") || schema.dig("properties", "type", "enum")
       return [] unless enum.is_a?(Array)
 
       example = schema["example"]
       enum.map do |type|
-        ev_example = example.is_a?(Hash) ? example.merge("type" => type) : { "type" => type }
+        key = schema.dig("properties", "event") ? "event" : "type"
+        ev_example = example.is_a?(Hash) ? example.merge(key => type) : { key => type }
         WebhookEvent.new(name: type, type: type, description: "", example: ev_example)
       end
+    end
+
+    def events_from_path_webhooks
+      found = []
+      (@doc["paths"] || {}).each do |path, item|
+        next unless path.to_s.match?(/webhook/i)
+        next unless item.is_a?(Hash)
+
+        HTTP_VERBS.each do |verb|
+          operation = item[verb]
+          next unless operation.is_a?(Hash)
+
+          named_examples_from(operation["requestBody"]).each do |name, value|
+            type = value.is_a?(Hash) && (value["event"] || value["type"])
+            type ||= event_type_from_name(name)
+            found << WebhookEvent.new(name: name.to_s, type: type.to_s, description: operation["summary"].to_s, example: value)
+          end
+        end
+      end
+      found
     end
 
     def webhook_operation(item)
@@ -756,6 +805,13 @@ module Rubyroad
       return match[0] if match
 
       "X-Webhook-Signature"
+    end
+
+    def webhook_format
+      blob = @doc.to_s
+      return :stripe_style if blob.match?(/t=<unix/i) || blob.match?(/v1=<hex/i) || blob.match?(/"t=.*,v1=/i)
+
+      :raw_hex
     end
   end
 
@@ -810,6 +866,10 @@ module Rubyroad
 
     def auth_header
       preferred_auth[:header]
+    end
+
+    def auth_scheme_key
+      preferred_auth[:key].to_s
     end
 
     def sandbox_origin

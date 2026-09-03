@@ -11,6 +11,9 @@
 /spec/reports/
 /tmp/
 /generated/
+/output/
+/app/services/provider/*.rb
+!/app/services/provider/README.md
 /vendor/bundle
 .idea/
 .vscode/

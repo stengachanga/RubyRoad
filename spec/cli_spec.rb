@@ -2,7 +2,7 @@
 
 RSpec.describe Rubyroad::CLI do
   it "prints help" do
-    expect { described_class.start(["help"]) }.to output(/rubyroad generate/).to_stdout
+    expect { described_class.start(["help"]) }.to output(/integrate/).to_stdout
   end
 
   it "prints the version" do
@@ -17,7 +17,7 @@ RSpec.describe Rubyroad::CLI do
     status = nil
     expect do
       status = described_class.start(["generate", fixture_path("swagger2.yaml")])
-    end.to output(/Unsupported OpenAPI version/).to_stderr
+    end.to output(/Parsing spec/).to_stdout.and output(/Unsupported OpenAPI version/).to_stderr
     expect(status).to eq(1)
   end
 end
