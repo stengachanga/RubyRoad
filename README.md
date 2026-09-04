@@ -1,6 +1,6 @@
 # RubyRoad
 
-Генератор интеграций **выплат** Space Payments: OpenAPI 3.x → Ruby `Provider::*Service`. Разбор и кодоген — Ruby + ERB. В проекте нет нейросетей и AI-агентов.
+Генератор интеграций **выплат** Space Payments: OpenAPI 3.x → Ruby `Provider::*Service`. Разбор и кодоген — Ruby + ERB.
 
 Контракт:
 
