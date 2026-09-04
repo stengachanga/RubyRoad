@@ -22,8 +22,8 @@ module Rubyroad
         integrate(argv)
       when "generate", "g"
         integrate(argv)
-      when "generate-client"
-        generate_client(argv)
+      when "demo", "web"
+        demo_ui(argv)
       when "version", "-v", "--version"
         puts "rubyroad #{VERSION}"
         0
@@ -88,23 +88,17 @@ module Rubyroad
       0
     end
 
-    def generate_client(argv)
-      options = { out: nil, name: nil, force: false }
+    def demo_ui(argv)
+      options = { port: 4567, bind: "127.0.0.1" }
       parser = OptionParser.new do |opts|
-        opts.banner = "Usage: rubyroad generate-client SPEC_PATH [--out DIR] [--name NAME]"
-        opts.on("--out DIR", "Output directory (default: ./generated/<provider>)") { |v| options[:out] = v }
-        opts.on("--name NAME", "Gem/module name override") { |v| options[:name] = v }
-        opts.on("--force", "Overwrite an existing output directory") { options[:force] = true }
+        opts.banner = "Usage: rubyroad demo [--port PORT]"
+        opts.on("--port PORT", Integer, "Port (default: 4567)") { |v| options[:port] = v }
+        opts.on("--bind ADDR", "Bind address (default: 127.0.0.1)") { |v| options[:bind] = v }
       end
       parser.parse!(argv)
-      spec = argv.shift
-      if spec.nil? || spec.start_with?("-")
-        warn "rubyroad: SPEC_PATH is required"
-        return 1
-      end
-
-      result = Generator.generate(spec, out: options[:out], name: options[:name], force: options[:force])
-      print_client_summary(result)
+      require_relative "web"
+      puts "Demo UI http://#{options[:bind]}:#{options[:port]} — same generate process as ./integrate"
+      DemoUI.run!(bind: options[:bind], port: options[:port])
       0
     end
 
@@ -127,10 +121,6 @@ module Rubyroad
         display = path.sub(%r{\A#{Regexp.escape(Dir.pwd)}/?}, "./")
         puts "  #{display}"
       end
-      if result[:rails_path]
-        rails = result[:rails_path].sub(%r{\A#{Regexp.escape(Dir.pwd)}/?}, "./")
-        puts "  #{rails}  (Space Payments layout)"
-      end
     end
 
     def webhook_line(profile)
@@ -147,32 +137,23 @@ module Rubyroad
       "#{first},\n                  #{rest}"
     end
 
-    def print_client_summary(result)
-      analysis = result.fetch(:analysis)
-      puts "RubyRoad #{VERSION} Faraday client"
-      puts "  spec:     #{result.fetch(:source)}"
-      puts "  provider: #{analysis.title} (#{analysis.module_name})"
-      puts "  out:      #{result.fetch(:out)}"
-      puts "  Next: cd #{result.fetch(:out)} && bundle install && bundle exec rspec"
-    end
-
     def help_text
       <<~HELP
-        RubyRoad #{VERSION} — generate a Space Payments provider service from OpenAPI 3.x
+        RubyRoad #{VERSION} — генератор provider-сервиса выплат Space Payments из OpenAPI 3.x
 
         Usage:
           ./integrate --spec provider_api.yaml --provider novapay --lang ruby
           rubyroad generate --spec examples/provider_api.yaml --provider novapay --lang ruby
-          rubyroad generate-client SPEC_PATH [--out DIR] [--name NAME]
+          rubyroad demo
           rubyroad version
           rubyroad help
 
-        Primary output (hackathon demo):
+        Результат:
           ./output/<provider>_service.rb
           ./output/INTEGRATION.md
           ./output/fixtures.json
 
-        No neural nets: parsing and codegen are Ruby + ERB only.
+        Без нейросетей и AI-агентов в коде: разбор OpenAPI и ERB.
       HELP
     end
   end

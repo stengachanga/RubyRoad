@@ -9,6 +9,8 @@ require "webmock/rspec"
 
 WebMock.disable_net_connect!
 
+WebMock.disable_net_connect!
+
 RSpec.configure do |config|
   config.expect_with :rspec do |c|
     c.syntax = :expect
@@ -20,10 +22,6 @@ end
 module SpecHelpers
   def repo_root
     File.expand_path("..", __dir__)
-  end
-
-  def acme_spec_path
-    File.join(repo_root, "examples/acme_pay.openapi.yaml")
   end
 
   def novapay_spec_path

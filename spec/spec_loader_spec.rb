@@ -1,18 +1,18 @@
 # frozen_string_literal: true
 
 RSpec.describe Rubyroad::SpecLoader do
-  it "loads the bundled Acme Pay OpenAPI 3.1 spec" do
-    doc = described_class.load(acme_spec_path)
+  it "loads the bundled NovaPay OpenAPI 3 spec" do
+    doc = described_class.load(novapay_spec_path)
     expect(doc["openapi"]).to start_with("3.")
-    expect(doc.dig("info", "title")).to eq("Acme Pay API")
-    expect(doc["paths"]).to have_key("/payments")
+    expect(doc.dig("info", "title")).to eq("NovaPay Payout API")
+    expect(doc["paths"]).to have_key("/payouts")
   end
 
   it "resolves local $ref pointers in place" do
-    doc = described_class.load(acme_spec_path)
-    schema = doc.dig("paths", "/payments", "post", "requestBody", "content", "application/json", "schema")
+    doc = described_class.load(novapay_spec_path)
+    schema = doc.dig("paths", "/payouts", "post", "requestBody", "content", "application/json", "schema")
     expect(schema["properties"]).to have_key("amount")
-    expect(schema["x-rubyroad-ref"]).to include("CreatePaymentRequest")
+    expect(schema["x-rubyroad-ref"]).to include("CreatePayoutRequest")
   end
 
   it "rejects Swagger 2.0" do
@@ -38,12 +38,12 @@ RSpec.describe Rubyroad::SpecLoader do
   end
 
   it "downloads a spec from an http URL" do
-    yaml = File.read(acme_spec_path)
-    stub_request(:get, "https://specs.example.test/acme.yaml")
+    yaml = File.read(novapay_spec_path)
+    stub_request(:get, "https://specs.example.test/novapay.yaml")
       .to_return(status: 200, body: yaml, headers: { "Content-Type" => "application/yaml" })
 
-    doc = described_class.load("https://specs.example.test/acme.yaml")
-    expect(doc.dig("info", "title")).to eq("Acme Pay API")
+    doc = described_class.load("https://specs.example.test/novapay.yaml")
+    expect(doc.dig("info", "title")).to eq("NovaPay Payout API")
   end
 
   it "fails clearly when a URL returns an error" do

@@ -1,0 +1,37 @@
+openapi: 3.1.0
+info:
+  title: Webhooks Block Payouts
+  version: 1.0.0
+paths:
+  /payouts:
+    post:
+      operationId: createPayout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: { type: integer }
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              example: { id: "po_1", status: "pending" }
+webhooks:
+  payoutCompleted:
+    post:
+      description: payout.completed
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+            example:
+              event: payout.completed
+              payout_id: po_1
+              status: completed
+      responses:
+        "200":
+          description: ok

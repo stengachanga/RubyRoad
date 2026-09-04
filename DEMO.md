@@ -1,15 +1,15 @@
-# Judge demo (about a minute)
+# Демо для жюри (около минуты)
 
-From the repository root. Requires Ruby 3.2+ and Bundler. No neural nets — OpenAPI parse + ERB only.
+Из корня репозитория. Ruby 3.2+ и Bundler. Нейросетей нет — OpenAPI + ERB.
 
 ```bash
 bundle install
 ./integrate --spec examples/provider_api.yaml --provider novapay --lang ruby
 ```
 
-(`provider_api.yaml` at the repo root is the same file. `rubyroad generate --spec examples/provider_api.yaml --provider novapay --lang ruby` is an alias.)
+(`provider_api.yaml` в корне — тот же файл. `rubyroad generate --spec examples/provider_api.yaml --provider novapay --lang ruby` — алиас.)
 
-Expected stdout includes a parse summary:
+Ожидаемый stdout:
 
 ```
 Parsing spec...
@@ -27,20 +27,18 @@ Output:
   ./output/fixtures.json
 ```
 
-Then read:
+Дальше смотрите `output/` (образец NovaPay уже закоммичен). `Provider::NovapayService` реализует `check_conditions`, `create_request`, `process_callback`, `fetch_status`.
+
+## Demo UI (бонус)
+
+Тот же процесс в браузере: спека файлом или пример NovaPay.
 
 ```bash
-less output/novapay_service.rb
-less output/INTEGRATION.md
-python3 -m json.tool output/fixtures.json | head
+bundle exec rubyroad demo
 ```
 
-`Provider::NovapayService` subclasses `Provider::BaseService` and implements `check_conditions`, `create_request`, `process_callback`, `fetch_status`, plus `STATUS_MAP`. A copy is also at `app/services/provider/novapay_service.rb`.
+http://127.0.0.1:4567
 
-Optional: Faraday client gem (not the scored path):
+## About на GitHub
 
-```bash
-bundle exec rubyroad generate-client examples/acme_pay.openapi.yaml --force
-```
-
-There is also `script/demo`, which runs the integrate command for you.
+Описание репозитория: *«Генератор интеграций выплат Space Payments: OpenAPI → Ruby Provider::BaseService»*.

@@ -11,7 +11,10 @@
 /spec/reports/
 /tmp/
 /generated/
-/output/
+/output/*
+!/output/novapay_service.rb
+!/output/INTEGRATION.md
+!/output/fixtures.json
 /app/services/provider/*.rb
 !/app/services/provider/README.md
 /vendor/bundle

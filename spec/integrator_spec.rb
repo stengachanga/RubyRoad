@@ -81,6 +81,34 @@ RSpec.describe Rubyroad::Integrator do
     expect(status).to eq(0)
     expect(File).to exist(File.join(dest, "novapay_service.rb"))
   end
+
+  it "warns and still generates process_callback when webhooks live in OpenAPI webhooks:" do
+    dest = File.join(Dir.mktmpdir("rubyroad-webhooks"), "output")
+    result = described_class.generate(
+      spec: fixture_path("webhooks_block.yaml"),
+      provider: "blockpay",
+      out: dest,
+      lang: "ruby",
+      copy_rails: false
+    )
+    expect(result.fetch(:warnings).join).to match(/Unmapped spec element: OpenAPI webhooks/)
+    service = File.read(File.join(dest, "blockpay_service.rb"))
+    expect(service).to include("def process_callback")
+    expect(service).to include("def create_request")
+  end
+
+  it "warns about paths that are not bound to provider-service methods" do
+    dest = File.join(Dir.mktmpdir("rubyroad-extra"), "output")
+    result = described_class.generate(
+      spec: fixture_path("extra_path.yaml"),
+      provider: "extrapay",
+      out: dest,
+      lang: "ruby",
+      copy_rails: false
+    )
+    expect(result.fetch(:warnings).join).to include("GET /health")
+    expect(File).to exist(File.join(dest, "extrapay_service.rb"))
+  end
 end
 
 RSpec.describe "NovaPay analyzer" do

@@ -29,7 +29,7 @@ Drop `<%= profile.file_stem %>.rb` into `app/services/provider/<%= profile.file_
 | Method | Endpoint | Purpose | Idempotency / signature |
 | --- | --- | --- | --- |
 <% if profile.create_op -%>
-| `create_request` | `<%= profile.create_op.http_method.upcase %> <%= profile.create_op.path %>` | Create payout/deposit | <%= profile.create_op.has_idempotency ? "`#{profile.create_op.idempotency_header}` on create" : "—" %> |
+| `create_request` | `<%= profile.create_op.http_method.upcase %> <%= profile.create_op.path %>` | Create payout | <%= profile.create_op.has_idempotency ? "`#{profile.create_op.idempotency_header}` on create" : "—" %> |
 <% end -%>
 <% if profile.status_op -%>
 | `fetch_status` | `<%= profile.status_op.http_method.upcase %> <%= profile.status_op.path %>` | Poll provider status | — |

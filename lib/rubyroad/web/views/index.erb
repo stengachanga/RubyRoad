@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>RubyRoad — Demo UI</title>
+  <style>
+    body { font-family: sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+    textarea { width: 100%; min-height: 16rem; font-family: monospace; font-size: 12px; }
+    .warn { color: #8a5a00; }
+    .err { color: #a40000; }
+    label { display: block; margin: 0.75rem 0; }
+  </style>
+</head>
+<body>
+  <h1>RubyRoad Demo UI</h1>
+  <p>Тот же процесс, что <code>./integrate</code>: spec → provider-сервис выплат, INTEGRATION.md, fixtures.json.</p>
+
+  <% if error %>
+    <p class="err"><%= error %></p>
+  <% end %>
+
+  <form action="/generate" method="post" enctype="multipart/form-data">
+    <label>
+      Имя провайдера
+      <input type="text" name="provider" value="novapay">
+    </label>
+    <label>
+      <input type="checkbox" name="use_example" value="1">
+      Взять bundled-спеку NovaPay (выплаты)
+    </label>
+    <label>
+      Или загрузить OpenAPI spec
+      <input type="file" name="spec" accept=".yaml,.yml,.json">
+    </label>
+    <button type="submit">Сгенерировать</button>
+  </form>
+
+  <% warnings.each do |w| %>
+    <p class="warn">Warning: <%= w %></p>
+  <% end %>
+
+  <% if result %>
+    <% result.each do |name, body| %>
+      <h2><%= name %></h2>
+      <textarea readonly><%= body %></textarea>
+    <% end %>
+  <% end %>
+</body>
+</html>

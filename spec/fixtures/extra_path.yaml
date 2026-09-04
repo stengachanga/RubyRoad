@@ -1,0 +1,17 @@
+openapi: 3.0.3
+info:
+  title: Extra Path Payouts
+  version: 1.0.0
+paths:
+  /payouts:
+    post:
+      operationId: createPayout
+      responses:
+        "201":
+          description: created
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: ok

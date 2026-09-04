@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# Hackathon demo: generate NovaPay Space Payments service artifacts.
+# Демо хакатона: сгенерировать артефакты NovaPay.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
-
-export GEM_HOME="${GEM_HOME:-$root/vendor/bundle}"
-export BUNDLE_PATH="${BUNDLE_PATH:-$root/vendor/bundle}"
 
 echo "==> bundle install"
 bundle install
