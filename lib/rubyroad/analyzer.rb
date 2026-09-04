@@ -125,7 +125,7 @@ module Rubyroad
         has_webhooks: webhook_events.any? || webhook_documented?,
         webhook_events: webhook_events,
         webhook_header: webhook_header,
-        webhook_algorithm: "SHA256",
+        webhook_algorithm: webhook_algorithm,
         webhook_format: webhook_format,
         has_idempotency: operations.any?(&:has_idempotency),
         idempotency_header: idempotency_header,
@@ -802,9 +802,16 @@ module Rubyroad
     def webhook_header
       blob = @doc.to_s
       match = blob.match(/X-[A-Za-z0-9-]*Signature[A-Za-z0-9-]*/i)
-      return match[0] if match
+      match && match[0]
+    end
 
-      "X-Webhook-Signature"
+    def webhook_algorithm
+      blob = @doc.to_s
+      return "SHA256" if blob.match?(/HMAC-SHA-?256/i)
+      return "SHA512" if blob.match?(/HMAC-SHA-?512/i)
+      return "SHA1" if blob.match?(/HMAC-SHA-?1\b/i)
+
+      nil
     end
 
     def webhook_format

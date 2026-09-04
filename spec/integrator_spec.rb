@@ -82,7 +82,7 @@ RSpec.describe Rubyroad::Integrator do
     expect(File).to exist(File.join(dest, "novapay_service.rb"))
   end
 
-  it "warns and still generates process_callback when webhooks live in OpenAPI webhooks:" do
+  it "warns and no-ops process_callback when webhooks live only in OpenAPI webhooks:" do
     dest = File.join(Dir.mktmpdir("rubyroad-webhooks"), "output")
     result = described_class.generate(
       spec: fixture_path("webhooks_block.yaml"),
@@ -91,10 +91,63 @@ RSpec.describe Rubyroad::Integrator do
       lang: "ruby",
       copy_rails: false
     )
-    expect(result.fetch(:warnings).join).to match(/Unmapped spec element: OpenAPI webhooks/)
     service = File.read(File.join(dest, "blockpay_service.rb"))
     expect(service).to include("def process_callback")
+    expect(service).to include("Parse note:")
+    expect(service).to include("method is a no-op")
+    expect(service).not_to include("verify_signature!")
     expect(service).to include("def create_request")
+    expect(result.fetch(:warnings).join).not_to match(/process_callback is generated using/)
+  end
+
+  it "binds the closest payout path and comments when several creates exist" do
+    dest = File.join(Dir.mktmpdir("rubyroad-two-create"), "output")
+    result = described_class.generate(
+      spec: fixture_path("two_create_paths.yaml"),
+      provider: "twopath",
+      out: dest,
+      lang: "ruby",
+      copy_rails: false
+    )
+    service = File.read(File.join(dest, "twopath_service.rb"))
+    expect(service).to include("POST /payouts")
+    expect(service).not_to include("full_path(\"/transfers\")")
+    expect(service).to match(/Parse note:.*create_request: bound POST \/payouts/)
+    expect(service).to match(/Parse note:.*fetch_status: bound GET \/payouts\/\{id\}/)
+    expect(result.fetch(:warnings).join).to include("POST /transfers")
+  end
+
+  it "loads NovaPay canon from sibling overrides (kopecks, required_if, HMAC hex)" do
+    dest = File.join(Dir.mktmpdir("rubyroad-integrate"), "output")
+    generate_novapay(dest)
+    service = File.read(File.join(dest, "novapay_service.rb"))
+    expect(service).to include("bank_code is required when type=sbp")
+    expect(service).to include("card_number is required when type=card")
+    expect(service).to include("def create_action?")
+    expect(service).to include("SIGNATURE_ENCODING = \"hex\"")
+    expect(service).to include("HMAC.hexdigest")
+    expect(service).not_to include("# TODO:")
+    guide = File.read(File.join(dest, "INTEGRATION.md"))
+    expect(guide).to include("assignment canon")
+    expect(guide).to include("request_method")
+  end
+
+  it "warns TODO when amount_unit and required_if exist only in description" do
+    dest = File.join(Dir.mktmpdir("rubyroad-desc"), "output")
+    result = described_class.generate(
+      spec: fixture_path("description_only.yaml"),
+      provider: "prosepay",
+      out: dest,
+      lang: "ruby",
+      copy_rails: false
+    )
+    joined = result.fetch(:warnings).join
+    expect(joined).to include("TODO:")
+    expect(joined).to include("amount_unit")
+    expect(joined).to include("required_if")
+    service = File.read(File.join(dest, "prosepay_service.rb"))
+    expect(service).to include("# TODO:")
+    expect(service).to include("bank_code is required when type=sbp")
   end
 
   it "warns about paths that are not bound to provider-service methods" do

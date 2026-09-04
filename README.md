@@ -7,7 +7,7 @@
 ```ruby
 class Provider::ExampleService < Provider::BaseService
   def check_conditions(operation, request_method)
-  def create_request(operation, ...)
+  def create_request(operation, request_method = :create)
   def process_callback(payload)
   def fetch_status(operation)
 end
@@ -47,7 +47,7 @@ bundle exec ruby exe/rubyroad demo
 | `rubyroad demo` | Demo UI на Sinatra |
 | `rubyroad version` / `rubyroad help` | Версия / справка |
 
-Невалидная spec — понятная ошибка (нет `openapi`, Swagger 2.0, битый YAML, `$ref`). Неподдерживаемое — строка **Warning:**, генерация не падает (stub / пропуск).
+Невалидная spec — понятная ошибка (нет `openapi`, Swagger 2.0, битый YAML, `$ref`). Лишний path — **Warning:**, генерация не падает. Несколько похожих операций — ближайший payout и комментарий `Parse note`. Факты только из `description` (копейки, `required_if`, encoding HMAC) — **TODO/Warning** и опциональный общий файл `--overrides` / `<spec>.overrides.yaml` (`amount_unit`, `required_if`, `signature_encoding`). Это механизм, не хардкод провайдера. Callback без явного пути и HMAC в spec — `process_callback` ничего не делает.
 
 ## Что получается
 
@@ -73,7 +73,9 @@ OpenAPI 3.x  →  SpecLoader ($ref)
 | `lib/rubyroad/integrator.rb` | create / status / cancel / webhook / balance; три файла |
 | `lib/provider/base_service.rb` | Контракт Space Payments |
 | `lib/rubyroad/web.rb` | Demo UI |
+| `lib/rubyroad/overrides.rb` | Общий pin-файл: amount_unit, required_if, signature_encoding |
 | `examples/provider_api.yaml` | Пример NovaPay (выплаты, OpenAPI 3.0.3) |
+| `examples/provider_api.overrides.yaml` | Канон задания для этой spec (копейки, sbp/card, HMAC hex) |
 
 Универсальность — эвристики по путям и методам, не хардкод NovaPay. Второй bundled-спеки нет: жюри смотрит код.
 

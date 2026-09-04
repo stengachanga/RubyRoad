@@ -1,0 +1,33 @@
+openapi: 3.0.3
+info:
+  title: Description Only Payouts
+  version: "1.0.0"
+paths:
+  /payouts:
+    post:
+      operationId: createPayout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: integer
+                  description: Сумма в копейках
+                recipient:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                      enum: [sbp, card]
+                    bank_code:
+                      type: string
+                      description: БИК банка (обязателен для type=sbp)
+                    card_number:
+                      type: string
+                      description: Номер карты (обязателен для type=card)
+      responses:
+        "201":
+          description: created

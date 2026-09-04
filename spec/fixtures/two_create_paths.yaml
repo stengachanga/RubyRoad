@@ -1,0 +1,39 @@
+openapi: 3.0.3
+info:
+  title: Two Create Paths
+  version: "1.0.0"
+paths:
+  /payouts:
+    post:
+      operationId: createPayout
+      responses:
+        "201":
+          description: created
+  /transfers:
+    post:
+      operationId: createTransfer
+      responses:
+        "201":
+          description: created
+  /payouts/{id}:
+    get:
+      operationId: getPayout
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: ok
+  /transfers/{id}:
+    get:
+      operationId: getTransfer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: ok

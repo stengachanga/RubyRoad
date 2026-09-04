@@ -30,7 +30,7 @@ bundle install
 ./integrate --spec examples/provider_api.yaml --provider novapay --lang ruby
 ```
 
-Печатает разбор spec и пишет три файла. `rubyroad generate` — то же. Плохая spec даёт ошибку, не стек. Лишнее в spec — `Warning:`.
+Печатает разбор spec и пишет три файла. `rubyroad generate` — то же. Плохая spec даёт ошибку, не стек. Лишнее в spec — `Warning:`. Несколько похожих путей — ближайший к payouts и `# Parse note`. Нет явного HMAC-callback в spec — `process_callback` пустой. Текст только в description — TODO + опциональный `<spec>.overrides.yaml`.
 
 Demo UI: `bundle exec ruby exe/rubyroad demo` (терминал не закрывать, затем http://127.0.0.1:4567).
 

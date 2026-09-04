@@ -1,0 +1,13 @@
+# Generic overrides — keys are the mechanism, not a NovaPay SDK.
+# Case canon for this spec: kopecks; bank_code if sbp; HMAC-SHA256(raw body) → hex.
+amount_unit: minor
+signature_encoding: hex
+signature_payload: raw_body
+signature_algorithm: SHA256
+required_if:
+  - field: bank_code
+    when:
+      type: sbp
+  - field: card_number
+    when:
+      type: card

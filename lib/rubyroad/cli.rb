@@ -58,7 +58,7 @@ module Rubyroad
     end
 
     def integrate(argv)
-      options = { spec: nil, provider: nil, lang: "ruby", out: "output", force: true }
+      options = { spec: nil, provider: nil, lang: "ruby", out: "output", force: true, overrides: nil }
       parser = OptionParser.new do |opts|
         opts.banner = "Usage: ./integrate --spec provider_api.yaml --provider novapay --lang ruby"
         opts.on("--spec PATH", "OpenAPI 3 YAML/JSON file or URL") { |v| options[:spec] = v }
@@ -67,6 +67,7 @@ module Rubyroad
         opts.on("--out DIR", "Output directory (default: ./output)") { |v| options[:out] = v }
         opts.on("--name NAME", "Alias for --provider") { |v| options[:provider] = v }
         opts.on("--force", "Overwrite output files") { options[:force] = true }
+        opts.on("--overrides PATH", "Generic YAML/JSON pin-file (amount_unit, required_if, signature_encoding)") { |v| options[:overrides] = v }
         opts.on("-h", "--help", "Show this help") do
           puts opts
           return 0
@@ -82,7 +83,8 @@ module Rubyroad
         spec: options[:spec],
         provider: options[:provider],
         out: options[:out],
-        lang: options[:lang]
+        lang: options[:lang],
+        overrides: options[:overrides]
       )
       print_integrate_summary(result)
       0
@@ -126,9 +128,7 @@ module Rubyroad
     end
 
     def webhook_line(profile)
-      return "(none described)" unless profile.analysis.has_webhooks
-
-      "#{profile.analysis.webhook_header} (HMAC-#{profile.analysis.webhook_algorithm})"
+      profile.webhook_summary
     end
 
     def wrap_endpoints(endpoints)
@@ -146,6 +146,7 @@ module Rubyroad
         Usage:
           ./integrate --spec provider_api.yaml --provider novapay --lang ruby
           rubyroad generate --spec examples/provider_api.yaml --provider novapay --lang ruby
+          rubyroad generate --spec spec.yaml --provider name --lang ruby --overrides pins.yaml
           rubyroad demo
           rubyroad version
           rubyroad help

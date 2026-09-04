@@ -37,11 +37,14 @@ module Rubyroad
       500 => "retry and alert ops (provider internal error)"
     }.freeze
 
-    attr_reader :analysis, :warnings
+    attr_reader :analysis, :warnings, :parse_notes, :todos, :overrides
 
-    def initialize(analysis)
+    def initialize(analysis, overrides: Overrides.empty)
       @analysis = analysis
+      @overrides = overrides || Overrides.empty
       @warnings = []
+      @parse_notes = []
+      @todos = []
       classify!
     end
 
@@ -65,15 +68,48 @@ module Rubyroad
     end
 
     def amount_scale
-      blob = "#{create_op&.description} #{amount_property&.description} #{amount_property&.schema.inspect}"
-      return 100 if blob.match?(/kopeck|копе|cent\b|cents|minor/i)
-      return 1 if blob.match?(/major unit/i)
+      return @amount_scale if defined?(@amount_scale)
 
-      min = amount_minimum_minor
-      return 100 if min && min >= 1000
+      @amount_scale = resolve_amount_scale
+    end
 
-      @warnings << "Amount scale is assumed to be 100 (minor units). Confirm against the spec."
-      100
+    def signature_encoding
+      overrides.signature_encoding || "hex"
+    end
+
+    def signature_encoding_pinned?
+      !overrides.signature_encoding.nil?
+    end
+
+    def hmac_raw_body?
+      return false if overrides.signature_payload.to_s.match?(/timestamp/i)
+      return true if overrides.signature_payload.to_s.match?(/raw/i)
+
+      analysis.webhook_format != :stripe_style
+    end
+
+    def callback_algorithm
+      overrides.signature_algorithm || analysis.webhook_algorithm
+    end
+
+    def callback_actionable?
+      inbound_webhook_op && analysis.webhook_header && callback_algorithm
+    end
+
+    def payout_methods
+      type = recipient_properties.find { |prop| prop[:ruby_name] == "type" }
+      Array(type&.[](:enum)).map(&:to_s)
+    end
+
+    def required_if_rules
+      pinned = overrides.required_if
+      return pinned.map { |rule| normalize_required_if(rule) } unless pinned.empty?
+
+      description_required_if
+    end
+
+    def required_if_pinned?
+      !overrides.required_if.empty?
     end
 
     def amount_minimum_minor
@@ -103,7 +139,8 @@ module Rubyroad
           ruby_name: Inflector.ruby_ident(name),
           required: required.include?(name),
           pattern: prop.is_a?(Hash) ? prop["pattern"] : nil,
-          enum: prop.is_a?(Hash) ? Array(prop["enum"]) : []
+          enum: prop.is_a?(Hash) ? Array(prop["enum"]) : [],
+          description: prop.is_a?(Hash) ? prop["description"].to_s : ""
         }
       end
     end
@@ -115,14 +152,14 @@ module Rubyroad
     def status_map
       enums = status_enum
       if enums.empty?
-        @warnings << "No status enum found on the payout schema; using a generic STATUS_MAP."
+        note("status map: no enum on the payout schema; using keyword STATUS_MAP.")
         return SPACE_STATUS.dup
       end
 
       enums.each_with_object({}) do |status, acc|
         mapped = SPACE_STATUS[status.to_s]
         unless mapped
-          @warnings << "Unmapped provider status #{status.inspect}; defaulting to in_progress."
+          note("status #{status.inspect}: no keyword match; mapped to in_progress.")
           mapped = "in_progress"
         end
         acc[status.to_s] = mapped
@@ -142,10 +179,6 @@ module Rubyroad
 
     def webhook_events
       analysis.webhook_events
-    end
-
-    def hmac_raw_body?
-      analysis.webhook_format != :stripe_style
     end
 
     def endpoint_list
@@ -169,26 +202,18 @@ module Rubyroad
 
     def webhook_summary
       return "not described in spec" unless analysis.has_webhooks
+      return "described, not bound (no clear inbound HMAC path)" unless callback_actionable?
 
-      algo = analysis.webhook_algorithm
-      header = analysis.webhook_header
-      how = hmac_raw_body? ? "HMAC-#{algo} of raw body" : "HMAC-#{algo} timestamped (t=,v1=)"
-      "#{header} (#{how})"
+      "#{analysis.webhook_header} (HMAC-#{callback_algorithm})"
     end
 
     def collect_warnings
-      classify! if create_op.nil? && @warnings.empty?
+      classify! if create_op.nil? && @warnings.empty? && @parse_notes.empty?
       if create_op.nil?
         @warnings << "No create payout operation found (POST collection). create_request will be a stub."
       end
       if status_op.nil?
         @warnings << "No GET-by-id status operation found. fetch_status will be a stub."
-      end
-      if webhook_op && webhook_op.description.to_s.include?("webhooks:")
-        @warnings << "Unmapped spec element: OpenAPI webhooks: (no path). " \
-                     "process_callback is generated using #{analysis.webhook_header}."
-      elsif webhook_op.nil?
-        @warnings << "No webhook path or callbacks found. process_callback cannot verify a signature."
       end
       unmapped_ops = unmapped_operations
       unless unmapped_ops.empty?
@@ -202,6 +227,20 @@ module Rubyroad
         if %w[oauth2 openIdConnect].include?(scheme.type)
           @warnings << "Unsupported security scheme #{scheme.key} (#{scheme.type})."
         end
+      end
+      amount_scale
+      status_map
+      required_if_rules
+      unless required_if_pinned?
+        description_required_if.each do |rule|
+          todo("required_if #{rule['field']} when type=#{rule.dig('when', 'type')} is only in description, not oneOf. Pin it with required_if in overrides.")
+        end
+      end
+      if amount_from_description? && overrides.amount_unit.nil? && overrides.amount_scale.nil?
+        todo("amount_unit taken from description, not schema. Pin amount_unit (minor|major) in overrides.")
+      end
+      if callback_actionable? && !signature_encoding_pinned?
+        todo("HMAC encoding (hex vs base64) is not in the spec structure. Using hex as best-effort; pin signature_encoding in overrides.")
       end
       @warnings.uniq
     end
@@ -232,13 +271,13 @@ module Rubyroad
 
     def classify!
       ops = analysis.operations
-      @webhook_op = ops.find { |op| webhook?(op) }
-      @cancel_op = ops.find { |op| cancel?(op) }
-      @balance_op = ops.find { |op| balance?(op) }
-      @status_op = ops.find { |op| status?(op) && op != @balance_op }
-      @create_op = ops.find { |op| create?(op) }
-      if @webhook_op.nil? && analysis.has_webhooks
-        @webhook_op = synthetic_webhook_op
+      @webhook_op = pick_closest(ops.select { |op| webhook?(op) }, role: "process_callback")
+      @cancel_op = pick_closest(ops.select { |op| cancel?(op) }, role: "cancel_request")
+      @balance_op = pick_closest(ops.select { |op| balance?(op) }, role: "get_balance")
+      @status_op = pick_closest(ops.select { |op| status?(op) }, role: "fetch_status")
+      @create_op = pick_closest(ops.select { |op| create_candidate?(op) }, role: "create_request")
+      unless callback_actionable?
+        note("process_callback: spec has no clear inbound path and HMAC scheme; method is a no-op.")
       end
     end
 
@@ -303,12 +342,48 @@ module Rubyroad
       op.http_method == "get" && op.path_params.any? && !webhook?(op) && !balance?(op)
     end
 
-    def create?(op)
+    def create_candidate?(op)
       return false if webhook?(op) || cancel?(op) || balance?(op)
-      return true if op.http_method == "post" && op.path_params.empty?
-      return true if op.method_name.match?(/create_(payout|payment|transfer|withdrawal|disbursement)/)
 
-      false
+      (op.http_method == "post" && op.path_params.empty?) ||
+        op.method_name.match?(/create_(payout|payment|transfer|withdrawal|disbursement)/)
+    end
+
+    def create?(op)
+      create_candidate?(op)
+    end
+
+    def pick_closest(candidates, role:)
+      return nil if candidates.empty?
+
+      ranked = candidates.sort_by { |op| [-payout_score(op), op.path] }
+      best = ranked.first
+      if ranked.size > 1
+        others = ranked.drop(1).map { |op| "#{op.http_method.upcase} #{op.path}" }.join(", ")
+        note("#{role}: bound #{best.http_method.upcase} #{best.path} as closest payout match; also in spec: #{others}.")
+      end
+      best
+    end
+
+    def payout_score(op)
+      blob = "#{op.path} #{op.operation_id} #{op.method_name} #{op.resource} #{op.summary} #{op.description}"
+      score = 0
+      score += 100 if blob.match?(/payout/i)
+      score += 80 if blob.match?(/withdraw|disburse/i)
+      score += 50 if blob.match?(/\btransfer\b/i)
+      score += 20 if blob.match?(/\bpayment/i)
+      score += 40 if op.path.match?(%r{/payouts(/|\z)}i)
+      score -= 80 if blob.match?(/deposit|charge|acquir|customer|invoice|refund/i)
+      score -= 40 if blob.match?(/health|ping|ready/i)
+      score
+    end
+
+    def inbound_webhook_op
+      webhook_op
+    end
+
+    def note(message)
+      @parse_notes << message unless @parse_notes.include?(message)
     end
 
     def named_create_example
@@ -369,21 +444,75 @@ module Rubyroad
     def amount_currency_enum
       create_op&.body_properties&.find { |prop| prop.ruby_name == "currency" }&.enum || []
     end
+
+    def resolve_amount_scale
+      return overrides.amount_scale if overrides.amount_scale
+      return 100 if overrides.amount_unit == "minor"
+      return 1 if overrides.amount_unit == "major"
+
+      blob = amount_unit_blob
+      return 100 if blob.match?(/kopeck|копе|cent\b|cents|minor/i)
+      return 1 if blob.match?(/major unit/i)
+
+      min = amount_minimum_minor
+      if min && min >= 1000
+        note("amount scale: spec has no unit; inferred 100 from minimum #{min}.")
+        return 100
+      end
+
+      note("amount scale: spec has no unit; using 100 (closest minor-unit convention).")
+      100
+    end
+
+    def amount_unit_blob
+      "#{create_op&.description} #{amount_property&.description} #{amount_property&.schema.inspect}"
+    end
+
+    def amount_from_description?
+      return false if overrides.amount_unit || overrides.amount_scale
+
+      amount_unit_blob.match?(/kopeck|копе|cent\b|cents|minor/i) ||
+        amount_unit_blob.match?(/major unit/i)
+    end
+
+    def description_required_if
+      recipient_properties.filter_map do |prop|
+        desc = prop[:description].to_s
+        match = desc.match(/обязателен для type\s*=\s*([A-Za-z0-9_]+)/i) ||
+                desc.match(/required for type\s*=\s*([A-Za-z0-9_]+)/i)
+        next unless match
+
+        normalize_required_if("field" => prop[:name], "when" => { "type" => match[1] })
+      end
+    end
+
+    def normalize_required_if(rule)
+      field = (rule["field"] || rule[:field]).to_s
+      when_h = rule["when"] || rule[:when] || {}
+      type = (when_h["type"] || when_h[:type]).to_s
+      { "field" => field, "when" => { "type" => type } }
+    end
+
+    def todo(message)
+      @todos << message unless @todos.include?(message)
+      @warnings << "TODO: #{message}" unless @warnings.include?("TODO: #{message}")
+    end
   end
 
   class Integrator
     DEFAULT_SPEC = "examples/provider_api.yaml"
 
-    def self.generate(spec:, provider:, out: nil, lang: "ruby", copy_rails: true)
-      new(spec: spec, provider: provider, out: out, lang: lang, copy_rails: copy_rails).generate
+    def self.generate(spec:, provider:, out: nil, lang: "ruby", copy_rails: true, overrides: nil)
+      new(spec: spec, provider: provider, out: out, lang: lang, copy_rails: copy_rails, overrides: overrides).generate
     end
 
-    def initialize(spec:, provider:, out: nil, lang: "ruby", copy_rails: true)
+    def initialize(spec:, provider:, out: nil, lang: "ruby", copy_rails: true, overrides: nil)
       @source = spec
       @provider = provider
       @out = out
       @lang = lang
       @copy_rails = copy_rails
+      @overrides = overrides
     end
 
     def generate
@@ -394,7 +523,7 @@ module Rubyroad
 
       document = SpecLoader.load(@source)
       analysis = Analyzer.new(document, name: @provider).analyze
-      profile = PayoutProfile.new(analysis)
+      profile = PayoutProfile.new(analysis, overrides: Overrides.discover(@source, explicit: @overrides))
       warnings.concat(profile.collect_warnings)
 
       dest = File.expand_path(@out || "output")

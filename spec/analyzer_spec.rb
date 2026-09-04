@@ -37,6 +37,7 @@ RSpec.describe Rubyroad::Analyzer do
     expect(analysis.has_webhooks).to be true
     expect(analysis.webhook_events.map(&:type)).to include("payout.completed", "payout.failed")
     expect(analysis.webhook_header).to eq("X-NovaPay-Signature")
+    expect(analysis.webhook_algorithm).to eq("SHA256")
   end
 
   it "treats integer amount fields as money" do

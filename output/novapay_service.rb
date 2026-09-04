@@ -10,6 +10,7 @@
 require "faraday"
 require "json"
 require "openssl"
+require "base64"
 
 begin
   require "provider/base_service"
@@ -25,6 +26,7 @@ class Provider::NovapayService < Provider::BaseService
   AUTH_HEADER = "X-API-Key"
   IDEMPOTENCY_HEADER = "Idempotency-Key"
   SIGNATURE_HEADER = "X-NovaPay-Signature"
+  SIGNATURE_ENCODING = "hex"
   AMOUNT_SCALE = 100
   MIN_AMOUNT_MAJOR = 1000
 
@@ -47,20 +49,37 @@ class Provider::NovapayService < Provider::BaseService
     500 => :provider_error
   }.freeze
 
+  PAYOUT_METHODS = ["sbp", "card"].freeze
+  CREATE_ACTIONS = %w[create check payout].freeze
+
   def check_conditions(operation, request_method)
     result = super
     return result if result.is_a?(Hash) && result[:success] == false
 
-    if create_method?(request_method)
+    if create_action?(request_method)
       amount = operation_amount(operation)
       if amount && amount < MIN_AMOUNT_MAJOR
         return failure(:amount_too_low, "Amount must be at least #{MIN_AMOUNT_MAJOR} RUB (spec minimum is 100000 minor units)")
       end
     end
-    if create_method?(request_method)
+    if create_action?(request_method)
       phone = requisite_value(operation, "phone")
       if phone && !phone.to_s.match?(Regexp.new("^7\\d{10}$"))
         return failure(:invalid_phone, "Recipient phone must match #{Regexp.new("^7\\d{10}$").source}")
+      end
+    end
+    if create_action?(request_method)
+      expected = "sbp"
+      type = request_method.to_s.downcase == expected ? expected : requisite_value(operation, "type").to_s
+      if type == expected && requisite_value(operation, "bank_code").to_s.empty?
+        return failure(:missing_bank_code, "bank_code is required when type=sbp")
+      end
+    end
+    if create_action?(request_method)
+      expected = "card"
+      type = request_method.to_s.downcase == expected ? expected : requisite_value(operation, "type").to_s
+      if type == expected && requisite_value(operation, "card_number").to_s.empty?
+        return failure(:missing_card_number, "card_number is required when type=card")
       end
     end
 
@@ -68,8 +87,8 @@ class Provider::NovapayService < Provider::BaseService
   end
 
   # POST /payouts (createPayout)
-  def create_request(operation, *_args)
-    precheck = check_conditions(operation, :create)
+  def create_request(operation, request_method = :create)
+    precheck = check_conditions(operation, request_method)
     return precheck unless precheck[:success]
 
     headers = auth_headers
@@ -157,6 +176,9 @@ class Provider::NovapayService < Provider::BaseService
 
   # POST /payouts/{payout_id}/cancel (cancelPayout)
   def cancel_request(operation)
+    precheck = check_conditions(operation, :cancel)
+    return precheck unless precheck[:success]
+
     provider_id = operation_value(operation, :provider_operation_id)
     return failure(:missing_provider_id, "operation.provider_operation_id is required") if provider_id.to_s.empty?
 
@@ -315,8 +337,13 @@ class Provider::NovapayService < Provider::BaseService
     end
   end
 
-  def create_method?(request_method)
-    request_method.to_s.match?(/create|payout|pay/i)
+  def create_action?(request_method)
+    token = request_method.to_s.downcase
+    return false if %w[status fetch cancel].include?(token)
+    return true if %w[create check payout].include?(token)
+    return true if PAYOUT_METHODS.include?(token)
+
+    false
   end
 
   def operation_amount(operation)

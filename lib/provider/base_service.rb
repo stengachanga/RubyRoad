@@ -21,12 +21,13 @@ module Provider
       @logger = logger
     end
 
-    # Pre-checks before a create/status/cancel call. Override and call super.
+    # request_method is a logical action (create, status, check, cancel)
+    # or a gateway payment_method (e.g. sbp, card) — not an HTTP verb.
     def check_conditions(_operation, _request_method)
       success
     end
 
-    def create_request(_operation, *_args)
+    def create_request(_operation, _request_method = :create)
       failure(:not_implemented, "create_request must be generated from the OpenAPI spec")
     end
 

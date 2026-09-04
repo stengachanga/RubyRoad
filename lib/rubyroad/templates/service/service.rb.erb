@@ -1,6 +1,12 @@
 # frozen_string_literal: true
 
 <%= header_comment %>
+<% profile.parse_notes.each do |note| -%>
+# Parse note: <%= note %>
+<% end -%>
+<% profile.todos.each do |item| -%>
+# TODO: <%= item %>
+<% end -%>
 #
 # Space Payments provider service generated from OpenAPI.
 # Drop this file into app/services/provider/<%= profile.file_stem %>.rb
@@ -9,6 +15,7 @@
 require "faraday"
 require "json"
 require "openssl"
+require "base64"
 
 begin
   require "provider/base_service"
@@ -23,7 +30,10 @@ class <%= profile.service_class %> < Provider::BaseService
   LIVE_URL = <%= a.live_url.inspect %>
   AUTH_HEADER = <%= a.auth_header.inspect %>
   IDEMPOTENCY_HEADER = <%= (profile.create_op&.idempotency_header || a.idempotency_header).inspect %>
+<% if profile.callback_actionable? -%>
   SIGNATURE_HEADER = <%= a.webhook_header.inspect %>
+  SIGNATURE_ENCODING = <%= profile.signature_encoding.inspect %>
+<% end -%>
   AMOUNT_SCALE = <%= profile.amount_scale %>
 <% if profile.amount_minimum_major -%>
   MIN_AMOUNT_MAJOR = <%= profile.amount_minimum_major.to_i %>
@@ -46,12 +56,15 @@ class <%= profile.service_class %> < Provider::BaseService
     500 => :provider_error
   }.freeze
 
+  PAYOUT_METHODS = <%= profile.payout_methods.inspect %>.freeze
+  CREATE_ACTIONS = %w[create check payout].freeze
+
   def check_conditions(operation, request_method)
     result = super
     return result if result.is_a?(Hash) && result[:success] == false
 
 <% if profile.amount_minimum_major -%>
-    if create_method?(request_method)
+    if create_action?(request_method)
       amount = operation_amount(operation)
       if amount && amount < MIN_AMOUNT_MAJOR
         return failure(:amount_too_low, "Amount must be at least #{MIN_AMOUNT_MAJOR} <%= profile.currency %> (spec minimum is <%= profile.amount_minimum_minor %> minor units)")
@@ -59,10 +72,19 @@ class <%= profile.service_class %> < Provider::BaseService
     end
 <% end -%>
 <% if profile.phone_pattern -%>
-    if create_method?(request_method)
+    if create_action?(request_method)
       phone = requisite_value(operation, "phone")
       if phone && !phone.to_s.match?(Regexp.new(<%= profile.phone_pattern.inspect %>))
         return failure(:invalid_phone, "Recipient phone must match #{Regexp.new(<%= profile.phone_pattern.inspect %>).source}")
+      end
+    end
+<% end -%>
+<% profile.required_if_rules.each do |rule| -%>
+    if create_action?(request_method)
+      expected = <%= rule.dig("when", "type").inspect %>
+      type = request_method.to_s.downcase == expected ? expected : requisite_value(operation, "type").to_s
+      if type == expected && requisite_value(operation, <%= rule["field"].inspect %>).to_s.empty?
+        return failure(:missing_<%= Rubyroad::Inflector.ruby_ident(rule["field"]) %>, <%= "#{rule["field"]} is required when type=#{rule.dig("when", "type")}".inspect %>)
       end
     end
 <% end -%>
@@ -72,8 +94,8 @@ class <%= profile.service_class %> < Provider::BaseService
 
 <% if profile.create_op -%>
   # <%= profile.create_op.http_method.upcase %> <%= profile.create_op.path %> (<%= profile.create_op.operation_id %>)
-  def create_request(operation, *_args)
-    precheck = check_conditions(operation, :create)
+  def create_request(operation, request_method = :create)
+    precheck = check_conditions(operation, request_method)
     return precheck unless precheck[:success]
 
     headers = auth_headers
@@ -148,7 +170,7 @@ class <%= profile.service_class %> < Provider::BaseService
   end
 <% end -%>
 
-<% if profile.webhook_op -%>
+<% if profile.callback_actionable? -%>
   # <%= profile.webhook_op.http_method.upcase %> <%= profile.webhook_op.path %> (<%= profile.webhook_op.operation_id %>)
   def process_callback(payload)
     raw, headers = normalize_callback(payload)
@@ -173,14 +195,18 @@ class <%= profile.service_class %> < Provider::BaseService
     failure(:invalid_signature, e.message)
   end
 <% else -%>
+  # Parse note: no clear inbound callback in spec — do nothing.
   def process_callback(_payload)
-    failure(:not_implemented, "No webhook operation in the OpenAPI spec")
+    success(received: true)
   end
 <% end -%>
 
 <% if profile.cancel_op -%>
   # <%= profile.cancel_op.http_method.upcase %> <%= profile.cancel_op.path %> (<%= profile.cancel_op.operation_id %>)
   def cancel_request(operation)
+    precheck = check_conditions(operation, :cancel)
+    return precheck unless precheck[:success]
+
     provider_id = operation_value(operation, :provider_operation_id)
     return failure(:missing_provider_id, "operation.provider_operation_id is required") if provider_id.to_s.empty?
 
@@ -272,6 +298,7 @@ class <%= profile.service_class %> < Provider::BaseService
   end
 <% end -%>
 
+<% if profile.callback_actionable? -%>
   def verify_signature!(raw_body, headers)
     secret = callback_secret
     raise Provider::SignatureError, "callback secret is missing" if secret.to_s.empty?
@@ -280,7 +307,11 @@ class <%= profile.service_class %> < Provider::BaseService
     raise Provider::SignatureError, "missing #{SIGNATURE_HEADER} header" if provided.to_s.empty?
 
 <% if profile.hmac_raw_body? -%>
-    expected = OpenSSL::HMAC.hexdigest("SHA256", secret, raw_body.to_s)
+<% if profile.signature_encoding == "base64" -%>
+    expected = Base64.strict_encode64(OpenSSL::HMAC.digest(<%= profile.callback_algorithm.inspect %>, secret, raw_body.to_s))
+<% else -%>
+    expected = OpenSSL::HMAC.hexdigest(<%= profile.callback_algorithm.inspect %>, secret, raw_body.to_s)
+<% end -%>
     provided_hex = provided.to_s.sub(/\Asha256=/i, "")
     unless secure_compare(expected, provided_hex)
       raise Provider::SignatureError, "invalid #{SIGNATURE_HEADER}"
@@ -293,11 +324,16 @@ class <%= profile.service_class %> < Provider::BaseService
     timestamp = parts["t"]
     digest = parts["v1"] || provided.to_s
     signed = timestamp ? "#{timestamp}.#{raw_body}" : raw_body.to_s
-    expected = OpenSSL::HMAC.hexdigest("SHA256", secret, signed)
+<% if profile.signature_encoding == "base64" -%>
+    expected = Base64.strict_encode64(OpenSSL::HMAC.digest(<%= profile.callback_algorithm.inspect %>, secret, signed))
+<% else -%>
+    expected = OpenSSL::HMAC.hexdigest(<%= profile.callback_algorithm.inspect %>, secret, signed)
+<% end -%>
     raise Provider::SignatureError, "invalid #{SIGNATURE_HEADER}" unless secure_compare(expected, digest)
 <% end -%>
     true
   end
+<% end -%>
 
   def normalize_callback(payload)
     case payload
@@ -370,8 +406,13 @@ class <%= profile.service_class %> < Provider::BaseService
     end
   end
 
-  def create_method?(request_method)
-    request_method.to_s.match?(/create|payout|pay/i)
+  def create_action?(request_method)
+    token = request_method.to_s.downcase
+    return false if %w[status fetch cancel].include?(token)
+    return true if %w[create check payout].include?(token)
+    return true if PAYOUT_METHODS.include?(token)
+
+    false
   end
 
   def operation_amount(operation)
