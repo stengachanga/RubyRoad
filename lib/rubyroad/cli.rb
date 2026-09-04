@@ -97,7 +97,9 @@ module Rubyroad
       end
       parser.parse!(argv)
       require_relative "web"
-      puts "Demo UI http://#{options[:bind]}:#{options[:port]} — same generate process as ./integrate"
+      url = "http://#{options[:bind]}:#{options[:port]}"
+      $stdout.puts "Demo UI #{url} — same generate process as ./integrate"
+      $stdout.flush
       DemoUI.run!(bind: options[:bind], port: options[:port])
       0
     end

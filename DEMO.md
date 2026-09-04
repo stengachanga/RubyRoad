@@ -34,10 +34,10 @@ Output:
 Тот же процесс в браузере: спека файлом или пример NovaPay.
 
 ```bash
-bundle exec rubyroad demo
+bundle exec ruby exe/rubyroad demo
 ```
 
-http://127.0.0.1:4567
+Терминал оставить открытым. Когда напечатает адрес — открыть http://127.0.0.1:4567
 
 ## About на GitHub
 

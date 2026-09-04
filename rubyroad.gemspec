@@ -42,6 +42,8 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency "faraday", "~> 2.9"
   spec.add_dependency "sinatra", "~> 4.0"
+  spec.add_dependency "rackup", "~> 2.2"
+  spec.add_dependency "puma", "~> 6.6"
   spec.add_development_dependency "rake", "~> 13.0"
   spec.add_development_dependency "rspec", "~> 3.13"
   spec.add_development_dependency "webmock", "~> 3.23"

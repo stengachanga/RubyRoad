@@ -32,7 +32,7 @@ bundle install
 
 Печатает разбор spec и пишет три файла. `rubyroad generate` — то же. Плохая spec даёт ошибку, не стек. Лишнее в spec — `Warning:`.
 
-Demo UI: `bundle exec rubyroad demo`.
+Demo UI: `bundle exec ruby exe/rubyroad demo` (терминал не закрывать, затем http://127.0.0.1:4567).
 
 ## Как устроен генератор
 

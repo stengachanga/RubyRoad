@@ -31,10 +31,10 @@ bundle install
 Алиас: `rubyroad generate` с теми же флагами. `--spec` — файл или `http(s)` URL. `--lang ruby` обязателен. Demo UI (бонус, тот же процесс):
 
 ```bash
-bundle exec rubyroad demo
+bundle exec ruby exe/rubyroad demo
 ```
 
-Откройте http://127.0.0.1:4567 — загрузка spec или пример NovaPay.
+Окно терминала не закрывать. Когда появится `Demo UI http://127.0.0.1:4567` — открыть этот адрес (загрузка spec или пример NovaPay).
 
 Подробный прогон: [DEMO.md](DEMO.md). Для тех, кто не писал на Ruby: [STUDENTS.md](STUDENTS.md).
 
