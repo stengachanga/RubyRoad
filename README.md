@@ -13,6 +13,8 @@ class Provider::ExampleService < Provider::BaseService
 end
 ```
 
+`request_method` — логическое действие (`create` / `status` / `check` / `cancel`) или payment_method шлюза (`sbp`, `card`), не HTTP-метод.
+
 ## Запуск за минуту
 
 Ruby 3.2+, Bundler.
@@ -22,11 +24,19 @@ bundle install
 ./integrate --spec examples/provider_api.yaml --provider novapay --lang ruby
 ```
 
-Артефакты:
+Артефакты пишутся **только** в `--out` (по умолчанию `./output`):
 
 - `output/novapay_service.rb` — также в git как образец для жюри
 - `output/INTEGRATION.md`
 - `output/fixtures.json`
+
+В host-приложение:
+
+```bash
+rubyroad generate --spec provider.yaml --provider name --lang ruby --out app/services/provider --force
+```
+
+`--force` нужен, если `--out` не `./output` и файл сервиса уже есть. Рядом со spec можно положить `<spec>.overrides.yaml` (`amount_unit`, `required_if`, `signature_encoding`) или передать `--overrides`.
 
 Алиас: `rubyroad generate` с теми же флагами. `--spec` — файл или `http(s)` URL. `--lang ruby` обязателен. Demo UI (бонус, тот же процесс):
 
@@ -42,7 +52,7 @@ bundle exec ruby exe/rubyroad demo
 
 | Команда | Что делает |
 | --- | --- |
-| `./integrate --spec FILE --provider NAME --lang ruby` | Разобрать OpenAPI 3.x и записать три артефакта |
+| `./integrate --spec FILE --provider NAME --lang ruby` | Разобрать OpenAPI 3.x и записать три артефакта в `--out` |
 | `rubyroad generate …` | То же |
 | `rubyroad demo` | Demo UI на Sinatra |
 | `rubyroad version` / `rubyroad help` | Версия / справка |
@@ -51,11 +61,11 @@ bundle exec ruby exe/rubyroad demo
 
 ## Что получается
 
-1. Provider-сервис: Faraday, auth из `securitySchemes`, HMAC webhook, `STATUS_MAP` / `ERROR_MAP`, `check_conditions` из ограничений схемы.
+1. Provider-сервис: Faraday, auth из `securitySchemes`, HMAC webhook, `STATUS_MAP` / `ERROR_MAP`, `check_conditions` из ограничений схемы. Наследует **host** `Provider::BaseService`.
 2. `INTEGRATION.md` — авторизация, методы, статусы, ошибки, JSON подключения, формула подписи.
 3. `fixtures.json` — примеры из spec.
 
-Ключи API и callback secret задаются вручную (`NOVAPAY_API_KEY`, `NOVAPAY_CALLBACK_SECRET` или `credentials`). Остальное берётся из spec и operation.
+Ключи API и callback secret задаются вручную в host credentials (`NOVAPAY_API_KEY`, `NOVAPAY_CALLBACK_SECRET` или `credentials`). Остальное берётся из spec и operation.
 
 ## Архитектура
 
@@ -63,7 +73,7 @@ bundle exec ruby exe/rubyroad demo
 OpenAPI 3.x  →  SpecLoader ($ref)
              →  Analyzer + PayoutProfile
              →  ERB lib/rubyroad/templates/service
-             →  output/
+             →  --out/  (три файла)
 ```
 
 | Часть | Роль |
@@ -71,7 +81,7 @@ OpenAPI 3.x  →  SpecLoader ($ref)
 | `lib/rubyroad/spec_loader.rb` | Файл/URL, YAML/JSON, только OpenAPI 3.x, локальные `$ref` |
 | `lib/rubyroad/analyzer.rb` | Операции, схемы, servers, security, webhook-события |
 | `lib/rubyroad/integrator.rb` | create / status / cancel / webhook / balance; три файла |
-| `lib/provider/base_service.rb` | Контракт Space Payments |
+| `lib/provider/base_service.rb` | In-repo stub для тестов (host app подставляет свой BaseService) |
 | `lib/rubyroad/web.rb` | Demo UI |
 | `lib/rubyroad/overrides.rb` | Общий pin-файл: amount_unit, required_if, signature_encoding |
 | `examples/provider_api.yaml` | Пример NovaPay (выплаты, OpenAPI 3.0.3) |

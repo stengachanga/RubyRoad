@@ -4,8 +4,8 @@
 # Regenerating will overwrite local changes.
 #
 # Space Payments provider service generated from OpenAPI.
-# Drop this file into app/services/provider/novapay_service.rb
-# (RubyRoad also writes a copy there when you run ./integrate).
+# Drop this file into the host app at app/services/provider/novapay_service.rb
+# (use --out app/services/provider). Subclasses the host Provider::BaseService.
 
 require "faraday"
 require "json"
@@ -15,6 +15,8 @@ require "base64"
 begin
   require "provider/base_service"
 rescue LoadError
+  # Host apps load Provider::BaseService themselves. Fallback is only for
+  # RubyRoad's in-repo stub when loading generated files under ./output.
   require_relative "../lib/provider/base_service"
 end
 

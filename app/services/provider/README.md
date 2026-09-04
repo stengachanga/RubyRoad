@@ -1,7 +1,9 @@
-Generated Space Payments services land here:
+This folder is optional local scaffolding only.
 
-```
-app/services/provider/novapay_service.rb
+RubyRoad writes the three artifacts to `--out` (default `./output`). To drop a service into a host app:
+
+```bash
+rubyroad generate --spec path/to/spec.yaml --provider name --lang ruby --out app/services/provider --force
 ```
 
-`./integrate` writes this copy in addition to `output/<provider>_service.rb`. Do not edit by hand — regenerate from the OpenAPI spec.
+Do not treat this gem’s tree as the Space Payments application. Host apps supply their own `Provider::BaseService`.

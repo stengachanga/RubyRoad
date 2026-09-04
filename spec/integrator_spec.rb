@@ -162,6 +162,64 @@ RSpec.describe Rubyroad::Integrator do
     expect(result.fetch(:warnings).join).to include("GET /health")
     expect(File).to exist(File.join(dest, "extrapay_service.rb"))
   end
+
+  it "does not write into this gem's app/services/provider by default" do
+    dest = File.join(Dir.mktmpdir("rubyroad-no-rails"), "drop")
+    rails_copy = File.join(repo_root, "app/services/provider", "hostdrop_service.rb")
+    FileUtils.rm_f(rails_copy)
+    result = described_class.generate(
+      spec: novapay_spec_path,
+      provider: "hostdrop",
+      out: dest,
+      lang: "ruby"
+    )
+    expect(result[:rails_path]).to be_nil
+    expect(File).not_to exist(rails_copy)
+    expect(File).to exist(File.join(dest, "hostdrop_service.rb"))
+    guide = File.read(File.join(dest, "INTEGRATION.md"))
+    expect(guide).to include("host")
+    expect(guide).not_to match(/already copied there by/i)
+  end
+
+  it "refuses to overwrite a non-default --out service without --force" do
+    dest = File.join(Dir.mktmpdir("rubyroad-force"), "host")
+    described_class.generate(
+      spec: novapay_spec_path,
+      provider: "novapay",
+      out: dest,
+      lang: "ruby",
+      force: true
+    )
+    expect do
+      described_class.generate(
+        spec: novapay_spec_path,
+        provider: "novapay",
+        out: dest,
+        lang: "ruby"
+      )
+    end.to raise_error(Rubyroad::Error, /--force/)
+  end
+
+  it "overwrites a non-default --out service when --force is set" do
+    dest = File.join(Dir.mktmpdir("rubyroad-force-ok"), "host")
+    described_class.generate(
+      spec: novapay_spec_path,
+      provider: "novapay",
+      out: dest,
+      lang: "ruby",
+      force: true
+    )
+    marker = File.join(dest, "novapay_service.rb")
+    File.write(marker, "# stale\n")
+    described_class.generate(
+      spec: novapay_spec_path,
+      provider: "novapay",
+      out: dest,
+      lang: "ruby",
+      force: true
+    )
+    expect(File.read(marker)).to include("class Provider::NovapayService")
+  end
 end
 
 RSpec.describe "NovaPay analyzer" do

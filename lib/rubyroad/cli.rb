@@ -58,15 +58,19 @@ module Rubyroad
     end
 
     def integrate(argv)
-      options = { spec: nil, provider: nil, lang: "ruby", out: "output", force: true, overrides: nil }
+      options = { spec: nil, provider: nil, lang: "ruby", out: Integrator::DEFAULT_OUT, force: nil, overrides: nil }
+      force_set = false
       parser = OptionParser.new do |opts|
         opts.banner = "Usage: ./integrate --spec provider_api.yaml --provider novapay --lang ruby"
         opts.on("--spec PATH", "OpenAPI 3 YAML/JSON file or URL") { |v| options[:spec] = v }
         opts.on("--provider NAME", "Provider slug (e.g. novapay)") { |v| options[:provider] = v }
         opts.on("--lang LANG", "Target language (only ruby is supported)") { |v| options[:lang] = v }
-        opts.on("--out DIR", "Output directory (default: ./output)") { |v| options[:out] = v }
+        opts.on("--out DIR", "Drop directory for the three artifacts (default: ./output)") { |v| options[:out] = v }
         opts.on("--name NAME", "Alias for --provider") { |v| options[:provider] = v }
-        opts.on("--force", "Overwrite output files") { options[:force] = true }
+        opts.on("--force", "Overwrite an existing service file (required when --out is not ./output)") do
+          options[:force] = true
+          force_set = true
+        end
         opts.on("--overrides PATH", "Generic YAML/JSON pin-file (amount_unit, required_if, signature_encoding)") { |v| options[:overrides] = v }
         opts.on("-h", "--help", "Show this help") do
           puts opts
@@ -77,6 +81,7 @@ module Rubyroad
       options[:spec] ||= argv.shift
       options[:spec] ||= Integrator::DEFAULT_SPEC
       options[:provider] ||= File.basename(options[:spec], ".*")
+      options[:force] = nil unless force_set
 
       puts "Parsing spec..."
       result = Integrator.generate(
@@ -84,7 +89,9 @@ module Rubyroad
         provider: options[:provider],
         out: options[:out],
         lang: options[:lang],
-        overrides: options[:overrides]
+        overrides: options[:overrides],
+        force: options[:force],
+        copy_rails: false
       )
       print_integrate_summary(result)
       0
@@ -146,15 +153,19 @@ module Rubyroad
         Usage:
           ./integrate --spec provider_api.yaml --provider novapay --lang ruby
           rubyroad generate --spec examples/provider_api.yaml --provider novapay --lang ruby
+          rubyroad generate --spec spec.yaml --provider name --lang ruby --out app/services/provider --force
           rubyroad generate --spec spec.yaml --provider name --lang ruby --overrides pins.yaml
           rubyroad demo
           rubyroad version
           rubyroad help
 
-        Результат:
-          ./output/<provider>_service.rb
-          ./output/INTEGRATION.md
-          ./output/fixtures.json
+        Результат (только --out, по умолчанию ./output):
+          <out>/<provider>_service.rb
+          <out>/INTEGRATION.md
+          <out>/fixtures.json
+
+        --force нужен, если --out не ./output и файл сервиса уже есть.
+        request_method — логическое действие (create/status/check/cancel) или payment_method шлюза, не HTTP.
 
         Без нейросетей и AI-агентов в коде: разбор OpenAPI и ERB.
       HELP

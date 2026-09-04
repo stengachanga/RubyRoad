@@ -9,6 +9,8 @@ bundle install
 
 (`provider_api.yaml` в корне — тот же файл. `rubyroad generate --spec examples/provider_api.yaml --provider novapay --lang ruby` — алиас.)
 
+Три файла пишутся только в `./output` (дефолтный `--out`; повторный прогон может перезаписать). В чужой tree: `--out app/services/provider --force`.
+
 Ожидаемый stdout:
 
 ```
@@ -27,7 +29,7 @@ Output:
   ./output/fixtures.json
 ```
 
-Дальше смотрите `output/` (образец NovaPay уже закоммичен). `Provider::NovapayService` реализует `check_conditions`, `create_request`, `process_callback`, `fetch_status`.
+Дальше смотрите `output/` (образец NovaPay уже закоммичен). `Provider::NovapayService` реализует `check_conditions`, `create_request`, `process_callback`, `fetch_status`. `request_method` — логическое действие / payment_method, не HTTP.
 
 ## Demo UI (бонус)
 

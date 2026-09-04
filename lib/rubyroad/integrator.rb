@@ -211,6 +211,9 @@ module Rubyroad
       classify! if create_op.nil? && @warnings.empty? && @parse_notes.empty?
       if create_op.nil?
         @warnings << "No create payout operation found (POST collection). create_request will be a stub."
+      elsif payout_score(create_op) < 40
+        @warnings << "Bound create #{create_op.http_method.upcase} #{create_op.path} " \
+                     "does not look like a payout API (no /payouts signal). Confirm before embedding."
       end
       if status_op.nil?
         @warnings << "No GET-by-id status operation found. fetch_status will be a stub."
@@ -501,18 +504,28 @@ module Rubyroad
 
   class Integrator
     DEFAULT_SPEC = "examples/provider_api.yaml"
+    DEFAULT_OUT = "output"
 
-    def self.generate(spec:, provider:, out: nil, lang: "ruby", copy_rails: true, overrides: nil)
-      new(spec: spec, provider: provider, out: out, lang: lang, copy_rails: copy_rails, overrides: overrides).generate
+    def self.generate(spec:, provider:, out: nil, lang: "ruby", copy_rails: false, overrides: nil, force: nil)
+      new(
+        spec: spec,
+        provider: provider,
+        out: out,
+        lang: lang,
+        copy_rails: copy_rails,
+        overrides: overrides,
+        force: force
+      ).generate
     end
 
-    def initialize(spec:, provider:, out: nil, lang: "ruby", copy_rails: true, overrides: nil)
+    def initialize(spec:, provider:, out: nil, lang: "ruby", copy_rails: false, overrides: nil, force: nil)
       @source = spec
       @provider = provider
       @out = out
       @lang = lang
       @copy_rails = copy_rails
       @overrides = overrides
+      @force = force
     end
 
     def generate
@@ -526,13 +539,16 @@ module Rubyroad
       profile = PayoutProfile.new(analysis, overrides: Overrides.discover(@source, explicit: @overrides))
       warnings.concat(profile.collect_warnings)
 
-      dest = File.expand_path(@out || "output")
+      dest = File.expand_path(@out || DEFAULT_OUT)
       FileUtils.mkdir_p(dest)
 
       context = TemplateContext.new(analysis)
       context.profile = profile
 
       service_name = "#{profile.file_stem}.rb"
+      service_path = File.join(dest, service_name)
+      assert_overwrite_allowed!(service_path)
+
       service_body = render("service/service.rb.erb", context)
       write(dest, service_name, service_body)
       write(dest, "INTEGRATION.md", render("service/integration.md.erb", context))
@@ -575,6 +591,28 @@ module Rubyroad
       path = File.join(dest, relative)
       FileUtils.mkdir_p(File.dirname(path))
       File.write(path, contents)
+    end
+
+    def assert_overwrite_allowed!(service_path)
+      return unless File.file?(service_path)
+      return if force_overwrite?
+
+      raise Error,
+            "Refusing to overwrite #{service_path} without --force " \
+            "(default ./output may overwrite; other --out paths require --force)."
+    end
+
+    def force_overwrite?
+      return true if @force == true
+      return false if @force == false
+
+      default_out_dir?
+    end
+
+    def default_out_dir?
+      requested = File.expand_path(@out || DEFAULT_OUT)
+      default = File.expand_path(DEFAULT_OUT)
+      requested == default
     end
   end
 

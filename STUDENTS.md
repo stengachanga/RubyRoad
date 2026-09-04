@@ -4,16 +4,18 @@
 
 Магазин отправляет **выплаты** (СБП, карты) через HTTP-API провайдера. У каждого провайдера свой контракт, руками писать адаптер Space Payments долго.
 
-**RubyRoad — CLI.** На вход — OpenAPI spec провайдера. На выход — заготовка под Space Payments:
+**RubyRoad — CLI.** На вход — OpenAPI spec провайдера. На выход — заготовка под Space Payments в каталог `--out`:
 
 ```ruby
 class Provider::ExampleService < Provider::BaseService
   def check_conditions(operation, request_method)
-  def create_request(operation, ...)
+  def create_request(operation, request_method = :create)
   def process_callback(payload)
   def fetch_status(operation)
 end
 ```
+
+`request_method` — не HTTP, а действие (`create`/`status`/…) или тип выплаты (`sbp`/`card`).
 
 1. Ruby **provider-сервис** (`output/novapay_service.rb`)
 2. Гайд (`output/INTEGRATION.md`)
@@ -30,14 +32,14 @@ bundle install
 ./integrate --spec examples/provider_api.yaml --provider novapay --lang ruby
 ```
 
-Печатает разбор spec и пишет три файла. `rubyroad generate` — то же. Плохая spec даёт ошибку, не стек. Лишнее в spec — `Warning:`. Несколько похожих путей — ближайший к payouts и `# Parse note`. Нет явного HMAC-callback в spec — `process_callback` пустой. Текст только в description — TODO + опциональный `<spec>.overrides.yaml`.
+Печатает разбор spec и пишет три файла в `--out` (по умолчанию `./output`). В host app: `--out app/services/provider --force`. Плохая spec даёт ошибку, не стек. Лишнее в spec — `Warning:`. Несколько похожих путей — ближайший к payouts и `# Parse note`. Нет явного HMAC-callback в spec — `process_callback` пустой. Текст только в description — TODO + опциональный `<spec>.overrides.yaml`.
 
 Demo UI: `bundle exec ruby exe/rubyroad demo` (терминал не закрывать, затем http://127.0.0.1:4567).
 
 ## Как устроен генератор
 
 ```
-spec → SpecLoader → Analyzer → PayoutProfile → ERB → output/
+spec → SpecLoader → Analyzer → PayoutProfile → ERB → --out/
 ```
 
 1. **SpecLoader** — файл или URL, YAML/JSON.
